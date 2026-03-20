@@ -27,6 +27,16 @@ def init_db():
         except sqlite3.OperationalError:
             pass
             
+        try:
+            cursor.execute("ALTER TABLE leads ADD COLUMN external_id TEXT")
+        except sqlite3.OperationalError:
+            pass
+
+        try:
+            cursor.execute("ALTER TABLE leads ADD COLUMN crm_provider TEXT")
+        except sqlite3.OperationalError:
+            pass
+            
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS calls (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -95,6 +105,16 @@ def init_db():
                 FOREIGN KEY (lead_id) REFERENCES leads (id)
             )
         ''')
+
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS crm_integrations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            provider TEXT NOT NULL UNIQUE,
+            credentials TEXT NOT NULL,
+            is_active BOOLEAN DEFAULT 1,
+            last_synced_at TEXT
+        )
+    ''')
         
         try:
             cursor.execute("ALTER TABLE calls ADD COLUMN follow_up_note TEXT")
@@ -147,9 +167,16 @@ def create_lead(data: dict):
     with sqlite3.connect(DB_PATH) as conn:
         cursor = conn.cursor()
         cursor.execute('''
-            INSERT INTO leads (first_name, last_name, phone, source)
-            VALUES (?, ?, ?, ?)
-        ''', (data.get('first_name'), data.get('last_name', ''), data.get('phone'), data.get('source', 'Dashboard')))
+            INSERT INTO leads (first_name, last_name, phone, source, external_id, crm_provider)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (
+            data.get('first_name'), 
+            data.get('last_name', ''), 
+            data.get('phone'), 
+            data.get('source', 'Dashboard'),
+            data.get('external_id'),
+            data.get('crm_provider')
+        ))
         conn.commit()
         return cursor.lastrowid
 
@@ -321,3 +348,67 @@ def get_analytics() -> List[Dict]:
         })
         
     return stats
+
+
+# --- CRM INTEGRATIONS ---
+
+def get_all_crm_integrations() -> List[Dict]:
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute("SELECT * FROM crm_integrations").fetchall()
+        integrations = []
+        for row in rows:
+            try:
+                creds = json.loads(row["credentials"])
+            except:
+                creds = {}
+            integrations.append({
+                "id": row["id"],
+                "provider": row["provider"],
+                "credentials": creds,
+                "is_active": row["is_active"],
+                "last_synced_at": row["last_synced_at"]
+            })
+        return integrations
+
+def get_active_crm_integrations() -> List[Dict]:
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute("SELECT * FROM crm_integrations WHERE is_active = 1").fetchall()
+        integrations = []
+        
+        for row in rows:
+            try:
+                creds = json.loads(row["credentials"])
+            except:
+                creds = {}
+            integrations.append({
+                "id": row["id"],
+                "provider": row["provider"],
+                "credentials": creds,
+                "is_active": row["is_active"],
+                "last_synced_at": row["last_synced_at"]
+            })
+        return integrations
+
+def save_crm_integration(provider: str, credentials: dict):
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        val = json.dumps(credentials)
+        # Check if exists
+        existing = cursor.execute("SELECT id FROM crm_integrations WHERE provider = ?", (provider,)).fetchone()
+        if existing:
+            cursor.execute("UPDATE crm_integrations SET credentials = ?, is_active = 1 WHERE provider = ?", 
+                        (val, provider))
+        else:
+            cursor.execute("INSERT INTO crm_integrations (provider, credentials) VALUES (?, ?)", 
+                        (provider, val))
+        conn.commit()
+    return True
+
+def update_crm_last_synced(provider: str, sync_time: str):
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE crm_integrations SET last_synced_at = ? WHERE provider = ?", (sync_time, provider))
+        conn.commit()
+    return True

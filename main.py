@@ -19,6 +19,11 @@ import math
 from database import init_db, get_all_leads, get_lead_by_id, create_lead, get_all_sites, create_punch, get_site_by_id
 from database import update_lead_status, get_all_tasks, complete_task, get_reports, get_all_whatsapp_logs
 from database import upload_document, get_documents_by_lead, get_analytics, search_leads, update_lead_note
+from database import get_active_crm_integrations, update_crm_last_synced
+import importlib
+import inspect
+from crm_providers import BaseCRM
+from datetime import datetime
 
 load_dotenv()
 app = FastAPI()
@@ -32,8 +37,41 @@ app.add_middleware(
 )
 
 @app.on_event("startup")
-def on_startup():
+async def on_startup():
     init_db()
+    asyncio.create_task(poll_crm_leads())
+
+async def poll_crm_leads():
+    while True:
+        try:
+            active_crms = get_active_crm_integrations()
+            for crm in active_crms:
+                provider_name = crm["provider"].lower().replace(" ", "").replace("-", "")
+                credentials = crm.get("credentials", {})
+                
+                crm_client = None
+                try:
+                    module = importlib.import_module(f"crm_providers.{provider_name}")
+                    for name, obj in inspect.getmembers(module, inspect.isclass):
+                        if issubclass(obj, BaseCRM) and obj is not BaseCRM:
+                            crm_client = obj(**credentials)
+                            break
+                except Exception as e:
+                    print(f"Error loading CRM {provider_name}: {e}")
+                
+                if crm_client:
+                    new_leads = crm_client.fetch_new_leads()
+                    for lead in new_leads:
+                        lead["crm_provider"] = provider_name
+                        create_lead(lead)
+                        # Mark them as pulled so we don't fetch them again endlessly
+                        crm_client.update_lead_status(lead["external_id"], "In Dialer")
+                    
+                    update_crm_last_synced(provider_name, datetime.now().isoformat())
+        except Exception as e:
+            print(f"CRM Polling Error: {e}")
+            
+        await asyncio.sleep(60) # Poll every 60 seconds
 
 EXOTEL_API_KEY = os.getenv("EXOTEL_API_KEY")
 EXOTEL_API_TOKEN = os.getenv("EXOTEL_API_TOKEN")
@@ -74,6 +112,11 @@ class NoteCreate(BaseModel):
 class DocumentCreate(BaseModel):
     file_name: str
     file_url: str
+
+class CRMIntegrationCreate(BaseModel):
+    provider: str
+    api_key: str
+    base_url: str = ""
 
 def haversine_distance(lat1, lon1, lat2, lon2):
     R = 6371e3 # Earth radius in meters
@@ -246,6 +289,36 @@ def api_get_documents(lead_id: int):
 @app.get("/api/analytics")
 def api_get_analytics():
     return get_analytics()
+
+@app.get("/api/integrations")
+def api_get_integrations():
+    active = get_active_crm_integrations()
+    # Mask API keys for frontend security
+    for a in active:
+        if a["api_key"] and len(a["api_key"]) > 8:
+            a["api_key"] = a["api_key"][:4] + "****" + a["api_key"][-4:]
+        elif a["api_key"]:
+            a["api_key"] = "****"
+    return active
+
+from database import save_crm_integration
+
+@app.post("/api/integrations")
+async def create_integration(data: dict):
+    provider = data.get("provider")
+    credentials = data.get("credentials")
+    
+    if not provider or not credentials:
+        return JSONResponse(status_code=400, content={"error": "provider and credentials are required"})
+        
+    try:
+        # Save integration safely
+        from database import save_crm_integration
+        save_crm_integration(provider, credentials)
+        return {"status": "success"}
+    except Exception as e:
+        print(f"Error saving integration: {e}")
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 @app.post("/crm-webhook")
 async def handle_crm_webhook(request: Request, background_tasks: BackgroundTasks):
@@ -550,6 +623,36 @@ async def process_recording(recording_url: str, call_sid: str, phone: str):
         print("Summarization failed:", e)
         return
 
-    from database import update_call_note
+    from database import update_call_note, DB_PATH
+    import sqlite3
     update_call_note(call_sid, summary, phone)
-    print(f"✅ Follow-up note successfully generated and injected into CRM for {call_sid}!")
+    print(f"✅ Follow-up note successfully generated and injected into local DB for {call_sid}!")
+
+    # Push to external CRM if applicable
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        lead = conn.execute("SELECT external_id, crm_provider FROM leads WHERE phone LIKE ?", (f"%{phone}%",)).fetchone()
+        if lead and lead["crm_provider"] and lead["external_id"]:
+            import json
+            crm_info = conn.execute("SELECT credentials FROM crm_integrations WHERE provider = ?", (lead["crm_provider"],)).fetchone()
+            if crm_info:
+                crm_client = None
+                p_name = lead["crm_provider"].lower().replace(" ", "").replace("-", "")
+                try:
+                    creds = json.loads(crm_info["credentials"]) if crm_info["credentials"] else {}
+                    module = importlib.import_module(f"crm_providers.{p_name}")
+                    for name, obj in inspect.getmembers(module, inspect.isclass):
+                        if issubclass(obj, BaseCRM) and obj is not BaseCRM:
+                            crm_client = obj(**creds)
+                            break
+                except Exception as e:
+                    print(f"Error loading CRM callback {p_name}: {e}")
+                
+                if crm_client:
+                    crm_client.log_call(lead["external_id"], transcript, summary)
+                    
+                    if "Hot" in summary or "Warm" in summary:
+                        crm_client.update_lead_status(lead["external_id"], "Qualified")
+                    else:
+                        crm_client.update_lead_status(lead["external_id"], "Unqualified")
+                    print(f"✅ Successfully pushed call outcome to external CRM ({p_name})!")
