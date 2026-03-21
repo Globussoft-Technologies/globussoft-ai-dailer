@@ -1,6 +1,6 @@
 # 🚀 Globussoft Generative AI Dialer
 
-A full-stack, AI-native Real Estate CRM designed to fully automate telecom sales, field ops geofencing, and internal workflows under the Globussoft architecture.
+A full-stack, AI-native industry agnostic CRM designed to fully automate sales, field ops geofencing, and internal workflows under the Globussoft AI architecture.
 
 ![Globussoft Generative AI Dialer Architecture](assets/ai_architecture.png)
 
@@ -54,7 +54,7 @@ sequenceDiagram
 
 3. **Geofenced Field Operations Module**
    - HTML5 `navigator.geolocation` integration for agent site-visits.
-   - FastAPI `haversine` formula verifies whether the agent's GPS coordinates are precisely within 500m of a Real Estate Site.
+   - FastAPI `haversine` formula verifies whether the agent's GPS coordinates are precisely within 500m of a Client Site.
    - Accurate, un-spoofable attendance logging directly attached to the CRM.
 
 4. **Cross-Department Workflow Engine**
@@ -75,7 +75,7 @@ sequenceDiagram
 7. **Visual Data Analytics Center**
    - Natively rendered, dynamic CSS Flexbox charting engine.
    - Visualizes "Call Volume vs. Closed Deals" 7-day trailing trends.
-   - Zero-dependency executive monitoring portal for real estate stakeholders.
+   - Zero-dependency executive monitoring portal for business stakeholders.
 
 8. **Global Smart Search Query API**
    - Universal parameter-based SQLite matching engine (`LIKE %...%`).
@@ -95,7 +95,7 @@ sequenceDiagram
     - Allows agents to bypass the LLM Voice agent and directly manually update Client profiles post-call.
 
 12. **GenAI One-Click Email Drafter**
-    - Autonomously drafts hyper-personalized Real Estate follow-up emails based on SQLite timeline history.
+    - Autonomously drafts hyper-personalized follow-up emails based on SQLite timeline history.
     - Leverages Gemini 1.5 Flash natively directly inside the React table.
 
 ## 🛠 Getting Started
