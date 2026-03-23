@@ -462,11 +462,15 @@ async def dial_twilio(lead: dict):
 
 async def dial_exotel(lead: dict):
     import logging
+    import urllib.parse
     logger = logging.getLogger("uvicorn.error")
     # Use the Exotel Landing Flow App which has the Voicebot applet
     # configured to connect to our wss://test.callified.ai/media-stream
     exotel_app_id = os.getenv("EXOTEL_APP_ID", "1210468")
-    exoml_url = f"http://my.exotel.com/exoml/start/{exotel_app_id}"
+    lead_name = urllib.parse.quote(lead.get("name", "Customer"))
+    lead_interest = urllib.parse.quote(lead.get("interest", "our platform"))
+    lead_phone = urllib.parse.quote(lead.get("phone_number", ""))
+    exoml_url = f"http://my.exotel.com/exoml/start/{exotel_app_id}?name={lead_name}&interest={lead_interest}&phone={lead_phone}"
     url = f"https://api.exotel.com/v1/Accounts/{EXOTEL_ACCOUNT_SID}/Calls/connect.json"
     data = {
         "From": lead["phone_number"],
@@ -593,7 +597,7 @@ async def handle_media_stream(websocket: WebSocket):
     chat_history = []
 
     dynamic_context = (
-        f"Tum ek friendly human sales representative ho jiska naam Sarah hai, {lead_name} se phone par baat kar rahi ho. "
+        f"Tum ek friendly human sales representative ho jiska naam Arjun hai, {lead_name} se phone par baat kar rahe ho. "
         f"Unhone {interest} mein interest dikhaya hai. Tumne unhe pehle hi greet kar diya hai. "
         f"TUMHARE RESPONSES KE LIYE CRITICAL RULES: "
         f"1. Hamesha natural Hindi mein baat karo, jaise ek real Indian person phone par baat karta hai. Thoda Hinglish bhi use karo. "
@@ -601,7 +605,7 @@ async def handle_media_stream(websocket: WebSocket):
         f"3. Kabhi bhi markdown, asterisks, bold, bullet points ya koi text formatting mat use karo. "
         f"4. Jawab 1-2 chhote sentences mein do. Phone par log chhota bolte hain. "
         f"5. Ek baar mein ek hi qualifying question puchho. "
-        f"6. Kabhi mat bolo ki tum AI ho. Tum Sarah ho. "
+        f"6. Kabhi mat bolo ki tum AI ho. Tum Arjun ho. "
         f"7. Greeting ya introduction kabhi repeat mat karo."
     )
 
