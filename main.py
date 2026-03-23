@@ -21,7 +21,7 @@ from pydantic import BaseModel
 import io
 import csv
 import math
-from database import init_db, get_all_leads, get_lead_by_id, create_lead, get_all_sites, create_punch, get_site_by_id
+from database import init_db, get_all_leads, get_lead_by_id, create_lead, update_lead, delete_lead, get_all_sites, create_punch, get_site_by_id
 from database import update_lead_status, get_all_tasks, complete_task, get_reports, get_all_whatsapp_logs
 from database import upload_document, get_documents_by_lead, get_analytics, search_leads, update_lead_note
 from database import get_active_crm_integrations, update_crm_last_synced, create_user, get_user_by_email
@@ -211,6 +211,26 @@ def api_create_lead(lead: LeadCreate):
     try:
         lead_id = create_lead(lead.dict())
         return {"status": "success", "id": lead_id}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@app.put("/api/leads/{lead_id}")
+def api_update_lead(lead_id: int, lead: LeadCreate):
+    try:
+        success = update_lead(lead_id, lead.dict())
+        if success:
+            return {"status": "success", "message": f"Lead {lead_id} updated"}
+        return {"status": "error", "message": "Lead not found"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@app.delete("/api/leads/{lead_id}")
+def api_delete_lead(lead_id: int):
+    try:
+        success = delete_lead(lead_id)
+        if success:
+            return {"status": "success", "message": f"Lead {lead_id} deleted"}
+        return {"status": "error", "message": "Lead not found"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 

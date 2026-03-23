@@ -16,6 +16,11 @@ export default function App() {
   
   const [formData, setFormData] = useState({ first_name: '', last_name: '', phone: '', source: 'Manual Entry' });
 
+  // Edit Lead State
+  const [editModalOpen, setEditModalOpen] = useState(false);
+  const [editingLead, setEditingLead] = useState(null);
+  const [editFormData, setEditFormData] = useState({ first_name: '', last_name: '', phone: '', source: '' });
+
   const [fieldOpsData, setFieldOpsData] = useState({ agent_name: '', site_id: '' });
   const [punchStatus, setPunchStatus] = useState(null);
   const [punching, setPunching] = useState(false);
@@ -261,6 +266,45 @@ export default function App() {
     setDialingId(null);
   };
 
+  const handleEditLead = (lead) => {
+    setEditingLead(lead);
+    setEditFormData({
+      first_name: lead.first_name || '',
+      last_name: lead.last_name || '',
+      phone: lead.phone || '',
+      source: lead.source || 'Manual Entry'
+    });
+    setEditModalOpen(true);
+  };
+
+  const handleSaveEdit = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      await fetch(`${API_URL}/leads/${editingLead.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(editFormData)
+      });
+      setEditModalOpen(false);
+      setEditingLead(null);
+      fetchLeads();
+    } catch (e) {
+      console.error('Error updating lead', e);
+    }
+    setLoading(false);
+  };
+
+  const handleDeleteLead = async (lead) => {
+    if (!window.confirm(`Are you sure you want to delete ${lead.first_name} ${lead.last_name}?`)) return;
+    try {
+      await fetch(`${API_URL}/leads/${lead.id}`, { method: 'DELETE' });
+      fetchLeads();
+    } catch (e) {
+      console.error('Error deleting lead', e);
+    }
+  };
+
   const handleCreateIntegration = async (e) => {
     e.preventDefault();
     setLoading(true);
@@ -401,6 +445,20 @@ export default function App() {
                       </td>
                       <td>
                         <div style={{display: 'flex', gap: '8px'}}>
+                          <button 
+                            className="btn-call" 
+                            style={{background: 'rgba(250, 204, 21, 0.15)', color: '#facc15', borderColor: 'rgba(250, 204, 21, 0.3)', padding: '4px 10px', fontSize: '0.8rem'}}
+                            onClick={() => handleEditLead(lead)}
+                          >
+                            ✏️ Edit
+                          </button>
+                          <button 
+                            className="btn-call" 
+                            style={{background: 'rgba(239, 68, 68, 0.15)', color: '#ef4444', borderColor: 'rgba(239, 68, 68, 0.3)', padding: '4px 10px', fontSize: '0.8rem'}}
+                            onClick={() => handleDeleteLead(lead)}
+                          >
+                            🗑️
+                          </button>
                           <button 
                             className="btn-call" 
                             style={{background: 'rgba(56, 189, 248, 0.15)', color: '#38bdf8', borderColor: 'rgba(56, 189, 248, 0.3)'}}
@@ -799,6 +857,38 @@ export default function App() {
                 <button type="button" className="btn-call" style={{borderColor: 'transparent', color: '#cbd5e1', background: 'transparent'}} onClick={() => setIsModalOpen(false)}>Cancel</button>
                 <button type="submit" className="btn-primary" disabled={loading}>
                   {loading ? 'Saving...' : 'Save Lead'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {editModalOpen && editingLead && (
+        <div className="modal-overlay" onClick={() => setEditModalOpen(false)}>
+          <div className="glass-panel modal-content" onClick={e => e.stopPropagation()}>
+            <h2 style={{marginTop: 0, marginBottom: '2rem'}}>Edit Lead</h2>
+            <form onSubmit={handleSaveEdit}>
+              <div className="form-group">
+                <label>First Name</label>
+                <input className="form-input" required value={editFormData.first_name} onChange={e => setEditFormData({...editFormData, first_name: e.target.value})} />
+              </div>
+              <div className="form-group">
+                <label>Last Name <span style={{color: '#64748b', fontSize: '0.8rem'}}>(Optional)</span></label>
+                <input className="form-input" value={editFormData.last_name} onChange={e => setEditFormData({...editFormData, last_name: e.target.value})} />
+              </div>
+              <div className="form-group">
+                <label>Phone Number</label>
+                <input className="form-input" required type="tel" value={editFormData.phone} onChange={e => setEditFormData({...editFormData, phone: e.target.value})} />
+              </div>
+              <div className="form-group">
+                <label>Source</label>
+                <input className="form-input" value={editFormData.source} onChange={e => setEditFormData({...editFormData, source: e.target.value})} />
+              </div>
+              <div style={{display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '2.5rem'}}>
+                <button type="button" className="btn-call" style={{borderColor: 'transparent', color: '#cbd5e1', background: 'transparent'}} onClick={() => setEditModalOpen(false)}>Cancel</button>
+                <button type="submit" className="btn-primary" disabled={loading}>
+                  {loading ? 'Saving...' : 'Update Lead'}
                 </button>
               </div>
             </form>

@@ -191,6 +191,29 @@ def create_lead(data: dict):
         conn.commit()
         return cursor.lastrowid
 
+def update_lead(lead_id: int, data: dict):
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            UPDATE leads SET first_name = ?, last_name = ?, phone = ?, source = ?
+            WHERE id = ?
+        ''', (
+            data.get('first_name'),
+            data.get('last_name', ''),
+            data.get('phone'),
+            data.get('source', 'Dashboard'),
+            lead_id
+        ))
+        conn.commit()
+    return cursor.rowcount > 0
+
+def delete_lead(lead_id: int):
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM leads WHERE id = ?", (lead_id,))
+        conn.commit()
+    return cursor.rowcount > 0
+
 def update_call_note(call_sid: str, note: str, phone: str = ""):
     with sqlite3.connect(DB_PATH) as conn:
         cursor = conn.cursor()
