@@ -500,17 +500,24 @@ async def dial_exotel(lead: dict):
         "Url": exoml_url,
         "CallType": "trans"
     }
-    logger.info(f"Exotel dial attempt: URL={url}, From={phone_clean}, CallerId={EXOTEL_CALLER_ID}, ExoML={exoml_url}")
+    logger.info(f"Exotel dial attempt: From={phone_clean}, ExoML={exoml_url}")
     import subprocess
     try:
-        result = subprocess.run([
-            "curl", "-s", "-X", "POST", url,
-            "-u", f"{EXOTEL_API_KEY}:{EXOTEL_API_TOKEN}",
-            "-d", f"From={phone_clean}",
-            "-d", f"CallerId={EXOTEL_CALLER_ID}",
-            "-d", f"Url={exoml_url}",
-            "-d", "CallType=trans"
-        ], capture_output=True, text=True, timeout=15)
+        # Use shell to source .env directly — Python dotenv causes credential corruption
+        env_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env')
+        shell_cmd = (
+            f"source {env_file} && "
+            f"curl -s -X POST 'https://api.exotel.com/v1/Accounts/$EXOTEL_ACCOUNT_SID/Calls/connect.json' "
+            f"-u \"$EXOTEL_API_KEY:$EXOTEL_API_TOKEN\" "
+            f"-d 'From={phone_clean}' "
+            f"-d 'CallerId=$EXOTEL_CALLER_ID' "
+            f"-d 'Url={exoml_url}' "
+            f"-d 'CallType=trans'"
+        )
+        result = subprocess.run(
+            ["bash", "-c", shell_cmd],
+            capture_output=True, text=True, timeout=15
+        )
         logger.info(f"Exotel Call Response: {result.stdout[:300]}")
     except Exception as e:
         logger.error(f"Failed to trigger Exotel call: {e}")
