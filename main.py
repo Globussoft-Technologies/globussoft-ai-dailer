@@ -703,7 +703,7 @@ async def handle_media_stream(websocket: WebSocket):
                 # Forward raw audio to Deepgram
                 dg_connection.send(audio_data)
 
-            # Handle text frames (Twilio sends JSON)
+            # Handle text frames (Twilio sends JSON, Exotel may send JSON metadata)
             elif "text" in msg and msg["text"]:
                 try:
                     data = _json.loads(msg["text"])
@@ -711,21 +711,25 @@ async def handle_media_stream(websocket: WebSocket):
                     ws_logger.warning(f"Failed to parse WS text: {e}")
                     continue
 
+                ws_logger.info(f"WS text message received: {str(data)[:200]}")
+
+                # Twilio-style events
                 if data.get("event") == "start":
-                    stream_sid = data["start"]["streamSid"]
+                    stream_sid = data.get("start", {}).get("streamSid", f"exotel-{_uuid.uuid4().hex[:12]}")
                     twilio_websockets[stream_sid] = websocket
                     monitor_connections[stream_sid] = set()
                     whisper_queues[stream_sid] = []
                     takeover_active[stream_sid] = False
 
-                    # Send the initial greeting
-                    active_tts_tasks[stream_sid] = asyncio.create_task(
-                        synthesize_and_send_audio(
-                            f"Hi {lead_name}, I saw you requested info about {interest}. How can I help?",
-                            stream_sid,
-                            websocket,
+                    if not greeting_sent:
+                        greeting_sent = True
+                        active_tts_tasks[stream_sid] = asyncio.create_task(
+                            synthesize_and_send_audio(
+                                f"Hi {lead_name}, I saw you requested info about {interest}. How can I help?",
+                                stream_sid,
+                                websocket,
+                            )
                         )
-                    )
                 elif data.get("event") == "media":
                     dg_connection.send(
                         base64.b64decode(data["media"]["payload"])
@@ -733,6 +737,24 @@ async def handle_media_stream(websocket: WebSocket):
                 elif data.get("event") == "stop":
                     print("Media stream stopped.")
                     break
+                else:
+                    # Exotel or unknown JSON — setup stream if needed
+                    if not stream_sid:
+                        stream_sid = f"exotel-{_uuid.uuid4().hex[:12]}"
+                        twilio_websockets[stream_sid] = websocket
+                        monitor_connections[stream_sid] = set()
+                        whisper_queues[stream_sid] = []
+                        takeover_active[stream_sid] = False
+                        ws_logger.info(f"Exotel text stream started, sid={stream_sid}")
+                    if not greeting_sent:
+                        greeting_sent = True
+                        active_tts_tasks[stream_sid] = asyncio.create_task(
+                            synthesize_and_send_audio(
+                                f"Hi {lead_name}, I saw you requested info about {interest}. How can I help?",
+                                stream_sid,
+                                websocket,
+                            )
+                        )
     except Exception as e:
         print(f"Error in media stream handler: {e}")
     finally:
