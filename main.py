@@ -461,12 +461,15 @@ async def dial_twilio(lead: dict):
         print(f"Failed to trigger Twilio call: {e}")
 
 async def dial_exotel(lead: dict):
+    import logging
+    logger = logging.getLogger("uvicorn.error")
     exoml_url = (
         f"{PUBLIC_URL}/webhook/exotel"
         f"?name={urllib.parse.quote(lead['name'])}"
         f"&interest={urllib.parse.quote(lead['interest'])}"
         f"&phone={urllib.parse.quote(lead['phone_number'])}"
     )
+    # Use Exotel v1 API with correct subdomain for Singapore region
     url = f"https://api.exotel.com/v1/Accounts/{EXOTEL_ACCOUNT_SID}/Calls/connect.json"
     data = {
         "From": lead["phone_number"],
@@ -474,14 +477,16 @@ async def dial_exotel(lead: dict):
         "Url": exoml_url,
         "CallType": "trans"
     }
+    logger.info(f"Exotel dial attempt: URL={url}, From={lead['phone_number']}, CallerId={EXOTEL_CALLER_ID}, ExoML={exoml_url}")
     async with httpx.AsyncClient() as client:
         try:
             response = await client.post(
                 url, data=data, auth=(EXOTEL_API_KEY, EXOTEL_API_TOKEN)
             )
-            print(f"Exotel Call Triggered. Status: {response.status_code}, Response: {response.text}")
+            logger.info(f"Exotel Call Response: Status={response.status_code}, Body={response.text}")
         except Exception as e:
-            print(f"Failed to trigger Exotel call: {e}")
+            logger.error(f"Failed to trigger Exotel call: {e}")
+
 
 
 @app.post("/webhook/{provider}")
