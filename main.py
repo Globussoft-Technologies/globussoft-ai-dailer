@@ -514,7 +514,7 @@ async def synthesize_and_send_audio(
         "model_id": "eleven_turbo_v2",
         "voice_settings": {"stability": 0.5, "similarity_boost": 0.5},
     }
-    is_exotel = stream_sid.startswith("exotel-")
+    is_exotel = not stream_sid.startswith("SM")  # Exotel stream_sids are hex, Twilio starts with SM
     try:
         async with httpx.AsyncClient() as client:
             async with client.stream(
@@ -523,8 +523,14 @@ async def synthesize_and_send_audio(
                 async for chunk in response.aiter_bytes(chunk_size=4000):
                     if chunk:
                         if is_exotel:
-                            # Exotel: send raw binary audio
-                            await websocket.send_bytes(chunk)
+                            # Exotel: send as JSON text with base64 payload
+                            import base64 as _b64
+                            b64_chunk = _b64.b64encode(chunk).decode('utf-8')
+                            await websocket.send_text(json.dumps({
+                                "event": "media",
+                                "stream_sid": stream_sid,
+                                "media": {"payload": b64_chunk}
+                            }))
                         else:
                             # Twilio: send JSON-wrapped base64 audio
                             await websocket.send_text(
@@ -552,6 +558,7 @@ async def handle_media_stream(websocket: WebSocket):
     interest = websocket.query_params.get("interest", "our platform")
     lead_phone = websocket.query_params.get("phone", "")
     stream_sid = None
+    is_exotel_stream = False
     chat_history = []
 
     dynamic_context = (
@@ -721,13 +728,19 @@ async def handle_media_stream(websocket: WebSocket):
                 ws_logger.info(f"WS text message received: {str(data)[:200]}")
 
                 # Twilio/Exotel start event
-                if data.get("event") == "start":
+                if data.get("event") == "connected":
+                    ws_logger.info("Exotel WebSocket connected event received")
+                    continue
+                elif data.get("event") == "start":
                     # Exotel uses 'stream_sid' at top level, Twilio uses 'start.streamSid'
                     stream_sid = (
                         data.get("stream_sid")
                         or data.get("start", {}).get("streamSid")
                         or f"exotel-{_uuid.uuid4().hex[:12]}"
                     )
+                    if data.get("stream_sid"):
+                        is_exotel_stream = True
+                    ws_logger.info(f"Stream started: sid={stream_sid}, exotel={is_exotel_stream}")
                     twilio_websockets[stream_sid] = websocket
                     monitor_connections[stream_sid] = set()
                     whisper_queues[stream_sid] = []
