@@ -501,14 +501,19 @@ async def dial_exotel(lead: dict):
         "CallType": "trans"
     }
     logger.info(f"Exotel dial attempt: URL={url}, From={phone_clean}, CallerId={EXOTEL_CALLER_ID}, ExoML={exoml_url}")
-    async with httpx.AsyncClient() as client:
-        try:
-            response = await client.post(
-                url, data=data, auth=httpx.BasicAuth(EXOTEL_API_KEY, EXOTEL_API_TOKEN)
-            )
-            logger.info(f"Exotel Call Response: Status={response.status_code}, Body={response.text}")
-        except Exception as e:
-            logger.error(f"Failed to trigger Exotel call: {e}")
+    import subprocess
+    try:
+        result = subprocess.run([
+            "curl", "-s", "-X", "POST", url,
+            "-u", f"{EXOTEL_API_KEY}:{EXOTEL_API_TOKEN}",
+            "-d", f"From={phone_clean}",
+            "-d", f"CallerId={EXOTEL_CALLER_ID}",
+            "-d", f"Url={exoml_url}",
+            "-d", "CallType=trans"
+        ], capture_output=True, text=True, timeout=15)
+        logger.info(f"Exotel Call Response: {result.stdout[:300]}")
+    except Exception as e:
+        logger.error(f"Failed to trigger Exotel call: {e}")
 
 
 
