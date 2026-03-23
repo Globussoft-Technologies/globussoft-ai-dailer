@@ -534,13 +534,8 @@ async def synthesize_and_send_audio(
                     if chunk:
                         chunk_count += 1
                         if is_exotel:
-                            # Exotel: send as JSON text with base64 payload
-                            b64_chunk = base64.b64encode(chunk).decode('utf-8')
-                            await websocket.send_text(json.dumps({
-                                "event": "media",
-                                "stream_sid": stream_sid,
-                                "media": {"payload": b64_chunk}
-                            }))
+                            # Exotel: send raw binary mulaw audio
+                            await websocket.send_bytes(chunk)
                         else:
                             # Twilio: send JSON-wrapped base64 audio
                             await websocket.send_text(
