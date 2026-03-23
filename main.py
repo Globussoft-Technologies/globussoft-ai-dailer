@@ -568,82 +568,89 @@ async def handle_media_stream(websocket: WebSocket):
         llm_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY", "dummy"))
 
     dg_connection = dg_client.listen.websocket.v("1")
+    loop = asyncio.get_event_loop()
 
-    async def on_speech_started(self, **kwargs):
+    def on_speech_started(self, **kwargs):
         """Barge-in: cancel TTS when user starts speaking."""
         if stream_sid:
-            await websocket.send_text(
-                json.dumps({"event": "clear", "streamSid": stream_sid})
+            asyncio.run_coroutine_threadsafe(
+                websocket.send_text(
+                    json.dumps({"event": "clear", "streamSid": stream_sid})
+                ),
+                loop,
             )
         if stream_sid in active_tts_tasks and not active_tts_tasks[stream_sid].done():
             active_tts_tasks[stream_sid].cancel()
 
-    async def on_message(self, result, **kwargs):
+    def on_message(self, result, **kwargs):
         """Handle final transcription → LLM → TTS pipeline."""
         sentence = result.channel.alternatives[0].transcript
         if sentence and result.is_final:
             chat_history.append({"role": "user", "parts": [{"text": sentence}]})
-            
-            if stream_sid:
-                for monitor in monitor_connections.get(stream_sid, set()):
-                    try:
-                        asyncio.create_task(monitor.send_json({"type": "transcript", "role": "user", "text": sentence}))
-                    except Exception:
-                        pass
-                
-                if takeover_active.get(stream_sid, False):
-                    return # Skip LLM generation if human took over
 
-                pending = whisper_queues.get(stream_sid, [])
-                if pending:
-                    for whisper in pending:
-                        chat_history.append({"role": "user", "parts": [{"text": f"Manager Whisper: {whisper}. Acknowledge this implicitly in your next response."}]})
-                    pending.clear()
-
-            # RAG Retrieval
-            rag_context = ""
-            if knowledge_collection:
-                try:
-                    import google.generativeai as gai
-                    gai.configure(api_key=os.getenv("GEMINI_API_KEY", "dummy"))
-                    res = gai.embed_content(model="models/text-embedding-004", content=sentence, task_type="retrieval_query")
-                    query_emb = res['embedding']
-                    results = knowledge_collection.query(query_embeddings=[query_emb], n_results=2)
-                    if results and results.get('documents') and results['documents'][0]:
-                        docs = results['documents'][0]
-                        rag_context = "\n[KNOWLEDGE BASE RELEVANT INFO]:\n" + "\n---\n".join(docs)
-                except Exception as e:
-                    print(f"RAG error: {e}")
-            
-            final_system_instruction = dynamic_context + rag_context
-
-            try:
-                response = await llm_client.aio.models.generate_content(
-                    model="gemini-2.5-flash",
-                    contents=chat_history,
-                    config=types.GenerateContentConfig(
-                        system_instruction=final_system_instruction
-                    ),
-                )
-
-                chat_history.append(
-                    {"role": "model", "parts": [{"text": response.text}]}
-                )
-                
+            async def _process_transcript():
                 if stream_sid:
                     for monitor in monitor_connections.get(stream_sid, set()):
                         try:
-                            asyncio.create_task(monitor.send_json({"type": "transcript", "role": "agent", "text": response.text}))
+                            await monitor.send_json({"type": "transcript", "role": "user", "text": sentence})
                         except Exception:
                             pass
-            except Exception as e:
-                print(f"Error fetching response from Gemini: {e}")
-                return
 
-            if stream_sid:
-                active_tts_tasks[stream_sid] = asyncio.create_task(
-                    synthesize_and_send_audio(response.text, stream_sid, websocket)
-                )
+                    if takeover_active.get(stream_sid, False):
+                        return  # Skip LLM generation if human took over
+
+                    pending = whisper_queues.get(stream_sid, [])
+                    if pending:
+                        for whisper in pending:
+                            chat_history.append({"role": "user", "parts": [{"text": f"Manager Whisper: {whisper}. Acknowledge this implicitly in your next response."}]})
+                        pending.clear()
+
+                # RAG Retrieval
+                rag_context = ""
+                if knowledge_collection:
+                    try:
+                        import google.generativeai as gai
+                        gai.configure(api_key=os.getenv("GEMINI_API_KEY", "dummy"))
+                        res = gai.embed_content(model="models/text-embedding-004", content=sentence, task_type="retrieval_query")
+                        query_emb = res['embedding']
+                        results = knowledge_collection.query(query_embeddings=[query_emb], n_results=2)
+                        if results and results.get('documents') and results['documents'][0]:
+                            docs = results['documents'][0]
+                            rag_context = "\n[KNOWLEDGE BASE RELEVANT INFO]:\n" + "\n---\n".join(docs)
+                    except Exception as e:
+                        print(f"RAG error: {e}")
+
+                final_system_instruction = dynamic_context + rag_context
+
+                try:
+                    response = await llm_client.aio.models.generate_content(
+                        model="gemini-2.5-flash",
+                        contents=chat_history,
+                        config=types.GenerateContentConfig(
+                            system_instruction=final_system_instruction
+                        ),
+                    )
+
+                    chat_history.append(
+                        {"role": "model", "parts": [{"text": response.text}]}
+                    )
+
+                    if stream_sid:
+                        for monitor in monitor_connections.get(stream_sid, set()):
+                            try:
+                                await monitor.send_json({"type": "transcript", "role": "agent", "text": response.text})
+                            except Exception:
+                                pass
+                except Exception as e:
+                    print(f"Error fetching response from Gemini: {e}")
+                    return
+
+                if stream_sid:
+                    active_tts_tasks[stream_sid] = asyncio.create_task(
+                        synthesize_and_send_audio(response.text, stream_sid, websocket)
+                    )
+
+            asyncio.run_coroutine_threadsafe(_process_transcript(), loop)
 
     dg_connection.on(LiveTranscriptionEvents.SpeechStarted, on_speech_started)
     dg_connection.on(LiveTranscriptionEvents.Transcript, on_message)
@@ -713,9 +720,14 @@ async def handle_media_stream(websocket: WebSocket):
 
                 ws_logger.info(f"WS text message received: {str(data)[:200]}")
 
-                # Twilio-style events
+                # Twilio/Exotel start event
                 if data.get("event") == "start":
-                    stream_sid = data.get("start", {}).get("streamSid", f"exotel-{_uuid.uuid4().hex[:12]}")
+                    # Exotel uses 'stream_sid' at top level, Twilio uses 'start.streamSid'
+                    stream_sid = (
+                        data.get("stream_sid")
+                        or data.get("start", {}).get("streamSid")
+                        or f"exotel-{_uuid.uuid4().hex[:12]}"
+                    )
                     twilio_websockets[stream_sid] = websocket
                     monitor_connections[stream_sid] = set()
                     whisper_queues[stream_sid] = []
