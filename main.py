@@ -26,6 +26,7 @@ from database import init_db, get_all_leads, get_lead_by_id, create_lead, update
 from database import update_lead_status, get_all_tasks, complete_task, get_reports, get_all_whatsapp_logs
 from database import upload_document, get_documents_by_lead, get_analytics, search_leads, update_lead_note
 from database import get_active_crm_integrations, update_crm_last_synced, create_user, get_user_by_email
+from database import get_all_pronunciations, add_pronunciation, delete_pronunciation, get_pronunciation_context
 import importlib
 import inspect
 from crm_providers import BaseCRM
@@ -572,6 +573,27 @@ def debug_health():
 
 _app_start_time = __import__('time').time()
 
+# --- PRONUNCIATION GUIDE API ---
+
+@app.get("/api/pronunciation")
+def get_pronunciations():
+    return get_all_pronunciations()
+
+@app.post("/api/pronunciation")
+async def create_pronunciation(request: Request):
+    data = await request.json()
+    word = data.get("word", "").strip()
+    phonetic = data.get("phonetic", "").strip()
+    if not word or not phonetic:
+        return {"error": "word and phonetic are required"}
+    add_pronunciation(word, phonetic)
+    return {"status": "ok", "word": word, "phonetic": phonetic}
+
+@app.delete("/api/pronunciation/{pronunciation_id}")
+def remove_pronunciation(pronunciation_id: int):
+    ok = delete_pronunciation(pronunciation_id)
+    return {"status": "ok" if ok else "not_found"}
+
 
 
 @app.post("/webhook/{provider}")
@@ -687,6 +709,9 @@ async def handle_media_stream(websocket: WebSocket):
     chat_history = []
     _llm_lock = asyncio.Lock()  # Turn guard: only one LLM call at a time
 
+    # Load pronunciation guide for TTS-correct product names
+    pronunciation_ctx = get_pronunciation_context()
+
     dynamic_context = (
         f"Tum ek friendly human sales representative ho jiska naam Arjun hai, {lead_name} se phone par baat kar rahe ho. "
         f"Unhone {interest} mein interest dikhaya hai. "
@@ -701,6 +726,7 @@ async def handle_media_stream(websocket: WebSocket):
         f"8. Agar user pehle hello ya hi bole, toh chhota sa acknowledge karo aur seedha topic pe aao. Jaise ek real person karta hai. "
         f"9. IMPORTANT: Chat history mein dekho — agar tumne kuch pehle bol diya hai toh woh dubara mat bolo. Hamesha conversation ko AAGE le jaao, peeche nahi. "
         f"10. Agar user baar baar same cheez puchhe, toh samjho unhe aur detail chahiye — naya information do, same line repeat mat karo."
+        f"{pronunciation_ctx}"
     )
 
     global dg_client, llm_client

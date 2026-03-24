@@ -126,6 +126,15 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS pronunciation_guide (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            word VARCHAR(255) NOT NULL UNIQUE,
+            phonetic VARCHAR(255) NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
     
     # Insert demo data
     cursor.execute("SELECT count(*) as cnt FROM sites")
@@ -497,3 +506,42 @@ def get_user_by_email(email: str) -> Optional[Dict]:
     row = cursor.fetchone()
     conn.close()
     return row
+
+# --- PRONUNCIATION GUIDE ---
+
+def get_all_pronunciations() -> List[Dict]:
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM pronunciation_guide ORDER BY word")
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+def add_pronunciation(word: str, phonetic: str):
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id FROM pronunciation_guide WHERE word = %s", (word,))
+    existing = cursor.fetchone()
+    if existing:
+        cursor.execute("UPDATE pronunciation_guide SET phonetic = %s WHERE word = %s", (phonetic, word))
+    else:
+        cursor.execute("INSERT INTO pronunciation_guide (word, phonetic) VALUES (%s, %s)", (word, phonetic))
+    conn.close()
+    return True
+
+def delete_pronunciation(pronunciation_id: int):
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM pronunciation_guide WHERE id = %s", (pronunciation_id,))
+    affected = cursor.rowcount
+    conn.close()
+    return affected > 0
+
+def get_pronunciation_context() -> str:
+    """Build a pronunciation guide string for injecting into LLM system prompt."""
+    rows = get_all_pronunciations()
+    if not rows:
+        return ""
+    lines = [f"'{r['word']}' ko '{r['phonetic']}' bolna hai" for r in rows]
+    return "\n[PRONUNCIATION GUIDE - in baat karo toh ye words aise bolo]: " + ", ".join(lines) + "."
+
