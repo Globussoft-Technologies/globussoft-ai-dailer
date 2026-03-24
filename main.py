@@ -1,4 +1,5 @@
 import os
+import call_logger
 import json
 import base64
 import urllib.parse
@@ -41,6 +42,7 @@ except ImportError:
 
 
 load_dotenv()
+call_logger.setup_logging()
 app = FastAPI()
 
 app.add_middleware(
@@ -519,7 +521,8 @@ async def dial_exotel(lead: dict):
         "Url": exoml_url,
         "CallType": "trans",
     }
-    logger.info(f"Exotel dial attempt: From={phone_clean}, ExoML={exoml_url}")
+    logger.info(f"[DIAL] Exotel attempt: From={phone_clean}, ExoML={exoml_url}")
+    call_logger.call_event(phone_clean, "DIAL_INITIATED", f"From={phone_clean}, Url={exoml_url}")
     last_dial_result = {"timestamp": datetime.now().isoformat(), "phone": phone_clean, "url": url, "exoml": exoml_url, "status": "pending"}
     try:
         # Build Basic auth header exactly as Exotel confirmed working
@@ -531,17 +534,43 @@ async def dial_exotel(lead: dict):
         }
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.post(url, data=data, headers=headers)
-        logger.info(f"Exotel Call Response ({resp.status_code}): {resp.text[:300]}")
+        logger.info(f"[DIAL] Exotel response ({resp.status_code}): {resp.text[:300]}")
+        call_logger.call_event(phone_clean, "DIAL_RESPONSE", f"status={resp.status_code}", response=resp.text[:200])
         last_dial_result.update({"status": resp.status_code, "response": resp.text[:500]})
         if resp.status_code != 200:
             logger.error(f"Exotel API error {resp.status_code}: {resp.text[:500]}")
     except Exception as e:
-        logger.error(f"Failed to trigger Exotel call: {e}")
+        logger.error(f"[DIAL] Failed to trigger Exotel call: {e}")
+        call_logger.call_event(phone_clean, "DIAL_ERROR", str(e))
         last_dial_result.update({"status": "error", "error": str(e)})
 
 @app.get("/api/debug/last-dial")
 def debug_last_dial():
     return last_dial_result
+
+@app.get("/api/debug/logs")
+def debug_logs(n: int = 100, level: str = "", keyword: str = ""):
+    """Return last N log entries. Filter by ?level=ERROR or ?keyword=TTS"""
+    return call_logger.get_logs(n=n, level=level or None, keyword=keyword or None)
+
+@app.get("/api/debug/call-timeline")
+def debug_call_timeline(n: int = 5):
+    """Return last N call timelines with per-event timestamps."""
+    return call_logger.get_timelines(n=n)
+
+@app.get("/api/debug/health")
+def debug_health():
+    """Quick health check with pipeline status."""
+    import time
+    return {
+        "status": "ok",
+        "uptime_s": round(time.time() - _app_start_time, 1),
+        "active_calls": len(call_logger._active_timelines),
+        "total_logs": len(call_logger._log_buffer),
+        "last_dial": last_dial_result.get("status", "none"),
+    }
+
+_app_start_time = __import__('time').time()
 
 
 
@@ -697,7 +726,9 @@ async def handle_media_stream(websocket: WebSocket):
         if sentence and result.is_final:
             import logging
             conv_logger = logging.getLogger("uvicorn.error")
-            conv_logger.info(f"USER SAID: {sentence}")
+            conv_logger.info(f"[STT] USER SAID: {sentence}")
+            if stream_sid:
+                call_logger.call_event(stream_sid, "STT_TRANSCRIPT", sentence[:100])
             chat_history.append({"role": "user", "parts": [{"text": sentence}]})
 
             async def _process_transcript():
@@ -752,7 +783,9 @@ async def handle_media_stream(websocket: WebSocket):
                     chat_history.append(
                         {"role": "model", "parts": [{"text": response.text}]}
                     )
-                    conv_logger.info(f"AI RESPONSE: {response.text[:200]}")
+                    conv_logger.info(f"[LLM] AI RESPONSE: {response.text[:200]}")
+                    if stream_sid:
+                        call_logger.call_event(stream_sid, "LLM_RESPONSE", response.text[:100], llm_time_s=round(t_post_llm - t_pre_llm, 3))
 
                     if stream_sid:
                         for monitor in monitor_connections.get(stream_sid, set()):
@@ -822,11 +855,14 @@ async def handle_media_stream(websocket: WebSocket):
                     monitor_connections[stream_sid] = set()
                     whisper_queues[stream_sid] = []
                     takeover_active[stream_sid] = False
-                    ws_logger.info(f"Exotel binary stream started, sid={stream_sid}")
+                    ws_logger.info(f"[WS] Exotel binary stream started, sid={stream_sid}")
+                    call_logger.call_event(stream_sid, "WS_CONNECTED", f"name={lead_name}, phone={lead_phone}")
 
                 # Send greeting on first audio frame
                 if not greeting_sent:
                     greeting_sent = True
+                    ws_logger.info(f"[GREETING] Sending greeting for {lead_name}")
+                    call_logger.call_event(stream_sid, "GREETING_SENT", f"to={lead_name}")
                     active_tts_tasks[stream_sid] = asyncio.create_task(
                         synthesize_and_send_audio(
                             f"Namaste {lead_name} Ji, Kaise hai aap? Mai Adsgpt se bol ra hu, kya 2 min baat ho sakti hai, apne hamare site pe ek form fill up kiya tha",
@@ -903,8 +939,14 @@ async def handle_media_stream(websocket: WebSocket):
                             )
                         )
     except Exception as e:
-        print(f"Error in media stream handler: {e}")
+        import logging as _log
+        _log.getLogger("uvicorn.error").error(f"[WS] Error in media stream: {e}")
+        if stream_sid:
+            call_logger.call_event(stream_sid, "WS_ERROR", str(e))
     finally:
+        if stream_sid:
+            call_logger.call_event(stream_sid, "WS_DISCONNECTED", f"turns={len(chat_history)}")
+            call_logger.end_call(stream_sid)
         if stream_sid and stream_sid in twilio_websockets:
             del twilio_websockets[stream_sid]
         try:
