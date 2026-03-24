@@ -770,38 +770,36 @@ async def handle_media_stream(websocket: WebSocket):
                 final_system_instruction = dynamic_context + rag_context
 
                 try:
-                    response = await llm_client.aio.models.generate_content(
-                        model="gemini-2.5-flash",
-                        contents=chat_history,
-                        config=types.GenerateContentConfig(
-                            system_instruction=final_system_instruction,
-                            max_output_tokens=150,
-                        ),
+                    import llm_provider
+                    response_text = await llm_provider.generate_response(
+                        chat_history=chat_history,
+                        system_instruction=final_system_instruction,
+                        max_tokens=150,
                     )
                     t_post_llm = _time.time()
 
                     chat_history.append(
-                        {"role": "model", "parts": [{"text": response.text}]}
+                        {"role": "model", "parts": [{"text": response_text}]}
                     )
-                    conv_logger.info(f"[LLM] AI RESPONSE: {response.text[:200]}")
+                    conv_logger.info(f"[LLM] AI RESPONSE: {response_text[:200]}")
                     if stream_sid:
-                        call_logger.call_event(stream_sid, "LLM_RESPONSE", response.text[:100], llm_time_s=round(t_post_llm - t_pre_llm, 3))
+                        call_logger.call_event(stream_sid, "LLM_RESPONSE", response_text[:100], llm_time_s=round(t_post_llm - t_pre_llm, 3))
 
                     if stream_sid:
                         for monitor in monitor_connections.get(stream_sid, set()):
                             try:
-                                await monitor.send_json({"type": "transcript", "role": "agent", "text": response.text})
+                                await monitor.send_json({"type": "transcript", "role": "agent", "text": response_text})
                             except Exception:
                                 pass
                 except Exception as e:
                     import traceback
-                    conv_logger.error(f"Error fetching response from Gemini: {e}")
+                    conv_logger.error(f"Error fetching LLM response: {e}")
                     conv_logger.error(traceback.format_exc())
                     return
 
                 if stream_sid:
                     import re
-                    clean_text = re.sub(r'[\*\_\#\`\~\>\|]', '', response.text)
+                    clean_text = re.sub(r'[\*\_\#\`\~\>\|]', '', response_text)
                     clean_text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', clean_text)
                     clean_text = clean_text.strip()
                     conv_logger.info(f"TIMING: pre_llm={t_pre_llm - t_start:.2f}s, llm={t_post_llm - t_pre_llm:.2f}s, total_to_tts={_time.time() - t_start:.2f}s")
