@@ -564,13 +564,13 @@ async def synthesize_and_send_audio(
         output_format = "ulaw_8000"
     url = (
         f"https://api.elevenlabs.io/v1/text-to-speech/"
-        f"{os.getenv('ELEVENLABS_VOICE_ID')}/stream?output_format={output_format}"
+        f"{os.getenv('ELEVENLABS_VOICE_ID')}/stream?output_format={output_format}&optimize_streaming_latency=3"
     )
     headers = {"xi-api-key": os.getenv("ELEVENLABS_API_KEY")}
     payload = {
         "text": text,
-        "model_id": "eleven_multilingual_v2",
-        "voice_settings": {"stability": 0.3, "similarity_boost": 0.8, "style": 0.2},
+        "model_id": "eleven_turbo_v2_5",
+        "voice_settings": {"stability": 0.3, "similarity_boost": 0.8},
     }
     tts_logger.info(f"TTS: is_exotel={is_exotel}, format={output_format}")
     try:
@@ -690,6 +690,9 @@ async def handle_media_stream(websocket: WebSocket):
             chat_history.append({"role": "user", "parts": [{"text": sentence}]})
 
             async def _process_transcript():
+                import time as _time
+                t_start = _time.time()
+
                 if stream_sid:
                     for monitor in monitor_connections.get(stream_sid, set()):
                         try:
@@ -706,9 +709,9 @@ async def handle_media_stream(websocket: WebSocket):
                             chat_history.append({"role": "user", "parts": [{"text": f"Manager Whisper: {whisper}. Acknowledge this implicitly in your next response."}]})
                         pending.clear()
 
-                # RAG Retrieval
+                # RAG Retrieval — skip if no knowledge base loaded
                 rag_context = ""
-                if knowledge_collection:
+                if knowledge_collection and knowledge_collection.count() > 0:
                     try:
                         import google.generativeai as gai
                         gai.configure(api_key=os.getenv("GEMINI_API_KEY", "dummy"))
@@ -721,16 +724,19 @@ async def handle_media_stream(websocket: WebSocket):
                     except Exception as e:
                         print(f"RAG error: {e}")
 
+                t_pre_llm = _time.time()
                 final_system_instruction = dynamic_context + rag_context
 
                 try:
                     response = await llm_client.aio.models.generate_content(
-                        model="gemini-2.5-flash",
+                        model="gemini-2.0-flash",
                         contents=chat_history,
                         config=types.GenerateContentConfig(
-                            system_instruction=final_system_instruction
+                            system_instruction=final_system_instruction,
+                            max_output_tokens=150,
                         ),
                     )
+                    t_post_llm = _time.time()
 
                     chat_history.append(
                         {"role": "model", "parts": [{"text": response.text}]}
@@ -754,6 +760,7 @@ async def handle_media_stream(websocket: WebSocket):
                     clean_text = re.sub(r'[\*\_\#\`\~\>\|]', '', response.text)
                     clean_text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', clean_text)
                     clean_text = clean_text.strip()
+                    conv_logger.info(f"TIMING: pre_llm={t_pre_llm - t_start:.2f}s, llm={t_post_llm - t_pre_llm:.2f}s, total_to_tts={_time.time() - t_start:.2f}s")
                     active_tts_tasks[stream_sid] = asyncio.create_task(
                         synthesize_and_send_audio(clean_text, stream_sid, websocket)
                     )
@@ -770,7 +777,9 @@ async def handle_media_stream(websocket: WebSocket):
             encoding="linear16",
             sample_rate=8000,
             channels=1,
-            endpointing=True,
+            endpointing=300,
+            interim_results=True,
+            utterance_end_ms=1000,
         )
     )
 
