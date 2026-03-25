@@ -262,16 +262,16 @@ export default function App() {
   };
 
   useEffect(() => {
+    if (!currentUser) return;
     fetchLeads();
     fetchSites();
     fetchTasks();
     fetchReports();
     fetchWhatsappLogs();
-    fetchLeads();
     fetchAnalytics();
     fetchPronunciations();
     fetchOrgs();
-  }, []);
+  }, [currentUser]);
 
   const handleStatusChange = async (leadId, newStatus) => {
     try {
