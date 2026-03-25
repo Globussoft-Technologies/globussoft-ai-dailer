@@ -22,7 +22,7 @@ export default function App() {
   const [authPage, setAuthPage] = useState('login'); // 'login' or 'signup'
   const [authError, setAuthError] = useState('');
   const [authLoading, setAuthLoading] = useState(false);
-  const [authForm, setAuthForm] = useState({ org_name: '', full_name: '', email: '', password: '' });
+  const [authForm, setAuthForm] = useState({ org_name: '', full_name: '', email: 'sumit@globussoft.com', password: 'sumit1234' });
 
   // Check token on mount
   useEffect(() => {
