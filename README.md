@@ -86,9 +86,10 @@ sequenceDiagram
    - High-speed Python pipeline converting SQLite arrays into downloadable Dataframes.
    - Streams native `.csv` files via FastApi directly to the Sales Director's local machine.
 
-10. **Role-Based Access Control (RBAC)**
-    - Enterprise security UI guardrails hiding sensitive PII and executive data.
-    - Simulated `[Admin]` vs `[Agent]` viewer contexts to lock down database export and global metrics routes natively.
+10. **Role-Based Access Control (RBAC) & Multi-Tenant Orgs**
+    - Genuine JWT-based authentication system separating users by `org_id`.
+    - `[Admin]` vs `[Agent]` viewer contexts to lock down database export and global metrics routes natively.
+    - Organizations can have multiple specific products dynamically scraped from their websites.
 
 11. **Manual Quick Notes System**
     - Instantaneous human-override timeline logging.
@@ -100,7 +101,8 @@ sequenceDiagram
 
 13. **Mobile APIs & Secure Authentication**
     - JSON Web Token (JWT) based authentication with Bcrypt password hashing.
-    - Dedicated and protected `/api/mobile/*` route prefix exclusively for Android/iOS applications to fetch Leads, log Field Ops punches, and run CRM updates.
+    - Full Glassmorphism login and signup UI on the web dashboard.
+    - Protected `/api/auth/*` routes and secure multi-tenant data fetching.
 
 ## 🛠 Getting Started
 
