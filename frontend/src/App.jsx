@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import CallMonitor from './CallMonitor';
 import KnowledgeBase from './KnowledgeBase';
 import Sandbox from './Sandbox';
@@ -82,6 +82,9 @@ export default function App() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [dialingId, setDialingId] = useState(null);
+  const [webCallActive, setWebCallActive] = useState(null);
+  const webCallWsRef = useRef(null);
+  const webCallAudioCtxRef = useRef(null);
   
   const [formData, setFormData] = useState({ first_name: '', last_name: '', phone: '', source: 'Manual Entry' });
 
@@ -146,6 +149,57 @@ export default function App() {
   const [selectedOrg, setSelectedOrg] = useState(null);
   const [orgProducts, setOrgProducts] = useState([]);
   const [scraping, setScraping] = useState(null); // product_id being scraped
+  const [newOrgName, setNewOrgName] = useState('');
+  const [showOrgInput, setShowOrgInput] = useState(false);
+  const [newProductName, setNewProductName] = useState('');
+  const [showProductInput, setShowProductInput] = useState(false);
+  const [systemPromptAuto, setSystemPromptAuto] = useState('');
+  const [systemPromptCustom, setSystemPromptCustom] = useState('');
+  const [promptSaving, setPromptSaving] = useState(false);
+  const [promptDirty, setPromptDirty] = useState(false);
+  const [activeVoiceProvider, setActiveVoiceProvider] = useState('elevenlabs');
+  const [activeVoiceId, setActiveVoiceId] = useState('');
+  const [savedVoiceName, setSavedVoiceName] = useState('');
+  const [activeLanguage, setActiveLanguage] = useState('hi');
+
+  const INDIAN_LANGUAGES = [
+    { code: 'hi', name: 'Hindi' },
+    { code: 'ta', name: 'Tamil' },
+    { code: 'te', name: 'Telugu' },
+    { code: 'kn', name: 'Kannada' },
+    { code: 'ml', name: 'Malayalam' },
+    { code: 'mr', name: 'Marathi' },
+    { code: 'gu', name: 'Gujarati' },
+    { code: 'bn', name: 'Bengali' },
+    { code: 'pa', name: 'Punjabi' },
+    { code: 'en', name: 'English' },
+  ];
+
+  const INDIAN_VOICES = {
+    elevenlabs: [
+      { id: 'oH8YmZXJYEZq5ScgoGn9', name: 'Aakash – Friendly Support' },
+      { id: 'X4ExprIXDKrWcHdtGysh', name: 'Anjura – Confident' },
+      { id: 'SXuKWBhKoIoAHKlf6Gt3', name: 'Gaurav – Professional' },
+      { id: 'N09NFwYJJG9VSSgdLQbT', name: 'Ishan – Bold & Upbeat' },
+      { id: 'U9wNM2BNANqtBCawWLgA', name: 'Himanshu – Calm' },
+      { id: 'h061KGyOtpLYDxcoi8E3', name: 'Ravi – Gentle' },
+      { id: 'Ock0AL5DBkvTUDePt4Hm', name: 'Viraj – Commanding' },
+      { id: 'nwj0s2LU9bDWRKND5yzA', name: 'Bunty – Fun' },
+      { id: 'amiAXapsDOAiHJqbsAZj', name: 'Priya – Confident ♀' },
+      { id: '6JsmTroalVewG1gA6Jmw', name: 'Sia – Friendly ♀' },
+      { id: '9vP6R7VVxNwGIGLnpl17', name: 'Suhana – Joyful ♀' },
+      { id: 'hO2yZ8lxM3axUxL8OeKX', name: 'Mini – Cute ♀' },
+      { id: 's0oIsoSJ9raiUm7DJNzW', name: '⭐ Default Voice' },
+    ],
+    smallest: [
+      { id: 'mithali', name: 'Mithali ♀' },
+      { id: 'priya', name: 'Priya ♀' },
+      { id: 'aravind', name: 'Aravind ♂' },
+      { id: 'raj', name: 'Raj ♂' },
+      { id: 'arman', name: 'Arman ♂' },
+      { id: 'jasmine', name: 'Jasmine ♀' },
+    ]
+  };
 
   // Auth block moved down to fix React hooks violation
 
@@ -193,7 +247,32 @@ export default function App() {
   };
 
   const fetchOrgs = async () => {
-    try { const res = await apiFetch(`${API_URL}/organizations`); setOrgs(await res.json()); } catch(e){}
+    try {
+      const res = await apiFetch(`${API_URL}/organizations`);
+      const data = await res.json();
+      setOrgs(data);
+      // Auto-select user's org if only one
+      if (data.length === 1 && !selectedOrg) {
+        setSelectedOrg(data[0]);
+        fetchOrgProducts(data[0].id);
+        fetchSystemPrompt(data[0].id);
+        // Load voice settings
+        try {
+          const vRes = await apiFetch(`${API_URL}/organizations/${data[0].id}/voice-settings`);
+          const vs = await vRes.json();
+          if (vs.tts_provider) {
+            setActiveVoiceProvider(vs.tts_provider);
+            if (vs.tts_voice_id) {
+              setActiveVoiceId(vs.tts_voice_id);
+              const allV = [...(INDIAN_VOICES[vs.tts_provider] || []), ...(INDIAN_VOICES.elevenlabs || []), ...(INDIAN_VOICES.smallest || [])];
+              const found = allV.find(v => v.id === vs.tts_voice_id);
+              if (found) setSavedVoiceName(found.name);
+            }
+            if (vs.tts_language) setActiveLanguage(vs.tts_language);
+          }
+        } catch(e){}
+      }
+    } catch(e){}
   };
 
   const fetchOrgProducts = async (orgId) => {
@@ -262,6 +341,162 @@ export default function App() {
       alert("Failed to hit the dialer API. Check console.");
     }
     setTimeout(() => setDialingId(null), 3000);
+  };
+
+  const handleWebCall = async (lead) => {
+    if (webCallActive === lead.id) {
+      // Disconnect active simulation
+      if (webCallWsRef.current) webCallWsRef.current.close();
+      if (webCallAudioCtxRef.current) webCallAudioCtxRef.current.close();
+      setWebCallActive(null);
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 8000 });
+      webCallAudioCtxRef.current = audioContext;
+
+      // Create a destination node to capture mixed audio for recording
+      const recDest = audioContext.createMediaStreamDestination();
+      const mediaRecorder = new MediaRecorder(recDest.stream, { mimeType: 'audio/webm;codecs=opus' });
+      const recordedChunks = [];
+      mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) recordedChunks.push(e.data); };
+      mediaRecorder.start(1000); // collect chunks every 1s
+
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const host = window.location.hostname;
+      
+      const qp = new URLSearchParams({
+        name: lead.first_name || 'Customer',
+        phone: lead.phone || '',
+        interest: lead.interest || (orgProducts.length > 0 ? orgProducts[0].name : 'our platform'),
+        lead_id: String(lead.id || ''),
+        tts_provider: activeVoiceProvider,
+        voice: activeVoiceId,
+        tts_language: activeLanguage,
+      }).toString();
+
+      let wsUrl;
+      if (host === 'localhost' || host === '127.0.0.1') {
+        wsUrl = `ws://${host}:8001/media-stream?${qp}`;
+      } else {
+        wsUrl = `${protocol}//${window.location.host}/media-stream?${qp}`;
+      }
+      
+      const ws = new WebSocket(wsUrl);
+      webCallWsRef.current = ws;
+
+      ws.onopen = () => {
+        setWebCallActive(lead.id);
+        ws.send(JSON.stringify({ event: 'connected' }));
+        const sid = `web_sim_${lead.id}_${Date.now()}`;
+        ws.send(JSON.stringify({ event: 'start', start: { stream_sid: sid }, stream_sid: sid }));
+
+        const source = audioContext.createMediaStreamSource(stream);
+        const processor = audioContext.createScriptProcessor(2048, 1, 1);
+
+        source.connect(processor);
+        processor.connect(audioContext.destination);
+        // Also route mic to recording destination
+        source.connect(recDest);
+
+        // Echo suppression: mute mic while AI speaks through speakers
+        let micMuted = true; // Start muted until greeting finishes
+        let unmuteTimer = null;
+
+        processor.onaudioprocess = (e) => {
+          if (ws.readyState !== WebSocket.OPEN) return;
+          if (micMuted) return; // Don't send mic audio while AI is speaking
+          const float32Array = e.inputBuffer.getChannelData(0);
+          
+          const int16Buffer = new Int16Array(float32Array.length);
+          for (let i = 0; i < float32Array.length; i++) {
+            let s = Math.max(-1, Math.min(1, float32Array[i]));
+            int16Buffer[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+          }
+          
+          let binary = '';
+          const bytes = new Uint8Array(int16Buffer.buffer);
+          for (let i = 0; i < bytes.byteLength; i++) {
+            binary += String.fromCharCode(bytes[i]);
+          }
+          const base64 = window.btoa(binary);
+
+          ws.send(JSON.stringify({
+            event: 'media',
+            media: { payload: base64 }
+          }));
+        };
+
+        let nextPlayTime = audioContext.currentTime;
+        ws.onmessage = (event) => {
+          const data = JSON.parse(event.data);
+          if (data.event === 'media') {
+            // Mute mic while AI is talking to prevent echo feedback
+            micMuted = true;
+            if (unmuteTimer) clearTimeout(unmuteTimer);
+
+            const audioStr = window.atob(data.media.payload);
+            const audioBytes = new Uint8Array(audioStr.length);
+            for (let i = 0; i < audioStr.length; i++) {
+              audioBytes[i] = audioStr.charCodeAt(i);
+            }
+            const int16Array = new Int16Array(audioBytes.buffer);
+            const float32Array = new Float32Array(int16Array.length);
+            for (let i = 0; i < int16Array.length; i++) {
+              float32Array[i] = int16Array[i] / 0x8000;
+            }
+            
+            const buffer = audioContext.createBuffer(1, float32Array.length, 8000);
+            buffer.getChannelData(0).set(float32Array);
+            
+            const destSource = audioContext.createBufferSource();
+            destSource.buffer = buffer;
+            destSource.connect(audioContext.destination);
+            // Also route TTS to recording destination
+            destSource.connect(recDest);
+            
+            if (audioContext.currentTime > nextPlayTime) nextPlayTime = audioContext.currentTime;
+            destSource.start(nextPlayTime);
+            nextPlayTime += buffer.duration;
+
+            // Unmute mic 500ms after last TTS chunk finishes playing
+            const remainingPlayMs = Math.max(0, (nextPlayTime - audioContext.currentTime) * 1000) + 500;
+            unmuteTimer = setTimeout(() => { micMuted = false; }, remainingPlayMs);
+          } else if (data.event === 'clear') {
+            nextPlayTime = audioContext.currentTime; // Discard TTS queue on barge-in
+            micMuted = false; // Immediately unmute on barge-in clear
+            if (unmuteTimer) clearTimeout(unmuteTimer);
+          }
+        };
+
+        ws.onclose = () => {
+          stream.getTracks().forEach(track => track.stop());
+          // Stop recording and upload
+          if (mediaRecorder.state !== 'inactive') {
+            mediaRecorder.stop();
+            mediaRecorder.onstop = async () => {
+              if (recordedChunks.length > 0) {
+                const blob = new Blob(recordedChunks, { type: 'audio/webm' });
+                const formData = new FormData();
+                formData.append('file', blob, `call_${lead.id}_${Date.now()}.webm`);
+                formData.append('lead_id', String(lead.id));
+                try {
+                  await apiFetch(`${API_URL}/upload-recording`, { method: 'POST', body: formData });
+                } catch(e) { console.error('Recording upload failed:', e); }
+              }
+            };
+          }
+          if (webCallAudioCtxRef.current) webCallAudioCtxRef.current.close();
+          setWebCallActive(null);
+        };
+      };
+    } catch (e) {
+      alert("Microphone access denied or connection to WebSockets failed.");
+      console.error(e);
+      setWebCallActive(null);
+    }
   };
 
   const handleOpenDocs = async (lead) => {
@@ -456,9 +691,9 @@ export default function App() {
   };
 
   const handleCreateOrg = async () => {
-    const name = prompt('Organization name:');
-    if (!name) return;
-    await apiFetch(`${API_URL}/organizations`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ name }) });
+    if (!newOrgName.trim()) return;
+    await apiFetch(`${API_URL}/organizations`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ name: newOrgName.trim() }) });
+    setNewOrgName(''); setShowOrgInput(false);
     fetchOrgs();
   };
 
@@ -471,17 +706,18 @@ export default function App() {
 
   const handleSelectOrg = (org) => {
     setSelectedOrg(org);
+    setShowProductInput(false); setNewProductName('');
     fetchOrgProducts(org.id);
+    fetchSystemPrompt(org.id);
   };
 
   const handleAddProduct = async () => {
-    if (!selectedOrg) return;
-    const name = prompt('Product name:');
-    if (!name) return;
+    if (!selectedOrg || !newProductName.trim()) return;
     await apiFetch(`${API_URL}/organizations/${selectedOrg.id}/products`, {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ name })
+      body: JSON.stringify({ name: newProductName.trim() })
     });
+    setNewProductName(''); setShowProductInput(false);
     fetchOrgProducts(selectedOrg.id);
   };
 
@@ -501,6 +737,29 @@ export default function App() {
       body: JSON.stringify(updates)
     });
     fetchOrgProducts(selectedOrg.id);
+    // Refresh system prompt preview after product update
+    if (selectedOrg) fetchSystemPrompt(selectedOrg.id);
+  };
+
+  const fetchSystemPrompt = async (orgId) => {
+    try {
+      const res = await apiFetch(`${API_URL}/organizations/${orgId}/system-prompt`);
+      const data = await res.json();
+      setSystemPromptAuto(data.auto_generated || '');
+      setSystemPromptCustom(data.custom_prompt || '');
+      setPromptDirty(false);
+    } catch(e) {}
+  };
+
+  const handleSaveSystemPrompt = async () => {
+    if (!selectedOrg) return;
+    setPromptSaving(true);
+    await apiFetch(`${API_URL}/organizations/${selectedOrg.id}/system-prompt`, {
+      method: 'PUT', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ custom_prompt: systemPromptCustom })
+    });
+    setPromptSaving(false);
+    setPromptDirty(false);
   };
 
   const handleDeleteProduct = async (productId) => {
@@ -660,7 +919,45 @@ export default function App() {
           )}
 
           <div className="glass-panel" style={{overflowX: 'auto'}}>
-            <h2 style={{marginTop: 0, marginBottom: '1.5rem', fontSize: '1.25rem', fontWeight: 600}}>Campaign Leads</h2>
+            <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '12px'}}>
+              <h2 style={{marginTop: 0, marginBottom: 0, fontSize: '1.25rem', fontWeight: 600}}>Campaign Leads</h2>
+              <div style={{display: 'flex', gap: '8px', alignItems: 'center'}}>
+                <span style={{fontSize: '0.8rem', color: '#64748b', fontWeight: 600}}>🔊 Voice:</span>
+                <select className="form-input" value={activeVoiceProvider}
+                  onChange={e => { setActiveVoiceProvider(e.target.value); setActiveVoiceId(INDIAN_VOICES[e.target.value]?.[0]?.id || ''); }}
+                  style={{width: 'auto', height: '32px', fontSize: '0.8rem', padding: '4px 8px', minWidth: '100px'}}>
+                  <option value="elevenlabs">ElevenLabs</option>
+                  <option value="smallest">Smallest AI</option>
+                </select>
+                <select className="form-input" value={activeVoiceId}
+                  onChange={e => setActiveVoiceId(e.target.value)}
+                  style={{width: 'auto', height: '32px', fontSize: '0.8rem', padding: '4px 8px', minWidth: '160px'}}>
+                  {(INDIAN_VOICES[activeVoiceProvider] || []).map(v => (
+                    <option key={v.id} value={v.id}>{v.name}</option>
+                  ))}
+                </select>
+                <select className="form-input" value={activeLanguage}
+                  onChange={e => setActiveLanguage(e.target.value)}
+                  style={{width: 'auto', height: '32px', fontSize: '0.8rem', padding: '4px 8px', minWidth: '90px'}}>
+                  {INDIAN_LANGUAGES.map(l => (
+                    <option key={l.code} value={l.code}>{l.name}</option>
+                  ))}
+                </select>
+                <button style={{background: 'linear-gradient(135deg, #8b5cf6, #6d28d9)', border: 'none', color: '#fff', fontSize: '0.75rem', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', whiteSpace: 'nowrap'}}
+                  onClick={async () => {
+                    if (!selectedOrg) return;
+                    await apiFetch(`${API_URL}/organizations/${selectedOrg.id}/voice-settings`, {
+                      method: 'PUT', headers: {'Content-Type': 'application/json'},
+                      body: JSON.stringify({ tts_provider: activeVoiceProvider, tts_voice_id: activeVoiceId, tts_language: activeLanguage })
+                    });
+                    const vName = (INDIAN_VOICES[activeVoiceProvider] || []).find(v => v.id === activeVoiceId)?.name || activeVoiceId;
+                    setSavedVoiceName(vName);
+                  }}>💾 Save Default</button>
+              </div>
+              {savedVoiceName && (
+                <div style={{fontSize: '0.75rem', color: '#a78bfa', marginTop: '4px', textAlign: 'right'}}>✅ Default voice: <strong>{savedVoiceName}</strong></div>
+              )}
+            </div>
             <table className="leads-table">
               <thead>
                 <tr>
@@ -739,10 +1036,23 @@ export default function App() {
                           </button>
                           <button 
                             className="btn-call" 
+                            style={{
+                              background: webCallActive === lead.id ? '#ef4444' : 'linear-gradient(135deg, rgba(34, 211, 238, 0.15), rgba(14, 165, 233, 0.15))', 
+                              color: webCallActive === lead.id ? '#ffffff' : '#38bdf8', 
+                              borderColor: webCallActive === lead.id ? '#ef4444' : 'rgba(34, 211, 238, 0.3)',
+                              boxShadow: webCallActive === lead.id ? '0 0 12px rgba(239, 68, 68, 0.6)' : 'none',
+                              fontWeight: webCallActive === lead.id ? 700 : 500
+                            }}
+                            onClick={() => handleWebCall(lead)}
+                          >
+                            {webCallActive === lead.id ? '🛑 End Live Sim' : '🎙️ Sim Web Call'}
+                          </button>
+                          <button 
+                            className="btn-call" 
                             onClick={() => handleDial(lead)}
                             disabled={dialingId === lead.id}
                           >
-                            {dialingId === lead.id ? 'Dialing...' : '📞 Call'}
+                            {dialingId === lead.id ? 'Dialing...' : '📞 Exotel'}
                           </button>
                         </div>
                       </td>
@@ -1152,37 +1462,33 @@ export default function App() {
             <p>Manage your organizations and products. The AI learns from this to have informed conversations.</p>
           </div>
 
-          <div className="glass-panel" style={{marginBottom: '2rem'}}>
-            <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem'}}>
-              <h4 style={{marginTop: 0, marginBottom: 0, fontSize: '1.1rem', fontWeight: 600}}>🏛️ Organizations</h4>
-              <button className="btn-primary" style={{background: 'linear-gradient(135deg, #22d3ee, #06b6d4)', fontSize: '0.85rem', padding: '6px 14px'}}
-                onClick={handleCreateOrg}>+ New Organization</button>
+          <div className="glass-panel" style={{marginBottom: '2rem', display: 'flex', alignItems: 'center', gap: '12px', padding: '1rem 1.5rem'}}>
+            <span style={{fontSize: '1.3rem'}}>🏛️</span>
+            <div>
+              <div style={{fontSize: '0.75rem', color: '#64748b', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.05em'}}>Your Organization</div>
+              <div style={{fontSize: '1.15rem', fontWeight: 700, color: '#22d3ee'}}>{selectedOrg ? selectedOrg.name : (orgs.length > 0 ? orgs[0].name : 'No organization linked')}</div>
             </div>
-
-            {orgs.length === 0 ? (
-              <div style={{padding: '1.5rem', textAlign: 'center', color: '#64748b', background: 'rgba(0,0,0,0.2)', borderRadius: '8px'}}>No organizations yet. Create one to get started.</div>
-            ) : (
-              <div style={{display: 'flex', flexWrap: 'wrap', gap: '10px'}}>
-                {orgs.map(org => (
-                  <div key={org.id} style={{display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 14px', borderRadius: '8px', cursor: 'pointer',
-                    background: selectedOrg?.id === org.id ? 'rgba(34, 211, 238, 0.15)' : 'rgba(255,255,255,0.05)',
-                    border: `1px solid ${selectedOrg?.id === org.id ? 'rgba(34, 211, 238, 0.3)' : 'rgba(255,255,255,0.1)'}`,
-                    color: selectedOrg?.id === org.id ? '#22d3ee' : '#e2e8f0'}}
-                    onClick={() => handleSelectOrg(org)}>
-                    <span style={{fontWeight: 600}}>{org.name}</span>
-                    <span style={{color: '#ef4444', fontSize: '0.75rem', cursor: 'pointer'}} onClick={e => { e.stopPropagation(); handleDeleteOrg(org.id); }}>✕</span>
-                  </div>
-                ))}
-              </div>
-            )}
           </div>
 
           {selectedOrg && (
             <div className="glass-panel" style={{marginBottom: '2rem'}}>
               <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem'}}>
                 <h4 style={{marginTop: 0, marginBottom: 0, fontSize: '1.1rem', fontWeight: 600, color: '#22d3ee'}}>📦 Products in {selectedOrg.name}</h4>
-                <button className="btn-primary" style={{background: 'linear-gradient(135deg, #22d3ee, #06b6d4)', fontSize: '0.85rem', padding: '6px 14px'}}
-                  onClick={handleAddProduct}>+ Add Product</button>
+                {!showProductInput ? (
+                  <button className="btn-primary" style={{background: 'linear-gradient(135deg, #22d3ee, #06b6d4)', fontSize: '0.85rem', padding: '6px 14px'}}
+                    onClick={() => setShowProductInput(true)}>+ Add Product</button>
+                ) : (
+                  <div style={{display: 'flex', gap: '8px', alignItems: 'center'}}>
+                    <input className="form-input" autoFocus placeholder="Product name (e.g. AdsGPT)..."
+                      value={newProductName} onChange={e => setNewProductName(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && handleAddProduct()}
+                      style={{width: '220px', height: '36px', fontSize: '0.85rem'}} />
+                    <button className="btn-primary" style={{background: 'linear-gradient(135deg, #10b981, #059669)', fontSize: '0.85rem', padding: '6px 14px', height: '36px'}}
+                      onClick={handleAddProduct}>Add</button>
+                    <button style={{background: 'transparent', border: '1px solid rgba(255,255,255,0.1)', color: '#94a3b8', fontSize: '0.85rem', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', height: '36px'}}
+                      onClick={() => { setShowProductInput(false); setNewProductName(''); }}>✕</button>
+                  </div>
+                )}
               </div>
 
               {orgProducts.length === 0 ? (
@@ -1206,7 +1512,7 @@ export default function App() {
                         <button className="btn-primary" style={{height: '42px', padding: '0 16px', whiteSpace: 'nowrap',
                           background: scraping === p.id ? '#475569' : 'linear-gradient(135deg, #06b6d4, #0891b2)', fontSize: '0.85rem'}}
                           onClick={() => handleScrapeProduct(p.id)} disabled={scraping === p.id}>
-                          {scraping === p.id ? '⏳ Analyzing...' : '🔍 Scrape'}
+                          {scraping === p.id ? '⏳ Analyzing...' : (p.website_url ? '🔍 Scrape Website' : '🧠 AI Research')}
                         </button>
                       </div>
 
@@ -1232,6 +1538,45 @@ export default function App() {
                   ))}
                 </div>
               )}
+            </div>
+          )}
+
+          {/* System Prompt Preview & Edit */}
+          {selectedOrg && (
+            <div className="glass-panel" style={{marginBottom: '2rem'}}>
+              <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem'}}>
+                <h4 style={{marginTop: 0, marginBottom: 0, fontSize: '1.1rem', fontWeight: 600}}>🤖 AI System Prompt</h4>
+                <div style={{display: 'flex', gap: '8px', alignItems: 'center'}}>
+                  {promptDirty && (
+                    <button className="btn-primary" style={{background: 'linear-gradient(135deg, #10b981, #059669)', fontSize: '0.85rem', padding: '6px 14px'}}
+                      onClick={handleSaveSystemPrompt} disabled={promptSaving}>
+                      {promptSaving ? '⏳ Saving...' : '💾 Save Prompt'}
+                    </button>
+                  )}
+                </div>
+              </div>
+              <p style={{color: '#94a3b8', fontSize: '0.85rem', marginBottom: '1rem'}}>This is the product knowledge the AI receives during calls. Edit to customize what the AI knows.</p>
+
+              {systemPromptAuto && !systemPromptCustom && (
+                <div style={{marginBottom: '1rem'}}>
+                  <label style={{display: 'block', marginBottom: '6px', fontWeight: 600, color: '#22d3ee', fontSize: '0.85rem'}}>📄 Auto-Generated from Products</label>
+                  <div style={{background: 'rgba(0,0,0,0.3)', padding: '12px', borderRadius: '8px',
+                    border: '1px solid rgba(34, 211, 238, 0.15)', whiteSpace: 'pre-wrap',
+                    color: '#cbd5e1', fontSize: '0.85rem', lineHeight: 1.6, maxHeight: '200px', overflowY: 'auto'}}>
+                    {systemPromptAuto}
+                  </div>
+                </div>
+              )}
+
+              <div>
+                <label style={{display: 'block', marginBottom: '6px', fontWeight: 600, fontSize: '0.85rem'}}>✏️ Custom System Prompt {systemPromptCustom ? '(Active)' : '(Optional Override)'}</label>
+                <textarea className="form-input" rows={8}
+                  placeholder={systemPromptAuto || 'Add product info, scrape a website, then customize the prompt here...'}
+                  value={systemPromptCustom}
+                  onChange={e => { setSystemPromptCustom(e.target.value); setPromptDirty(true); }}
+                  style={{resize: 'vertical', minHeight: '120px', fontSize: '0.85rem', lineHeight: 1.6}} />
+                <p style={{color: '#64748b', fontSize: '0.75rem', marginTop: '6px'}}>If empty, the auto-generated version from your products is used. If you write a custom prompt, it overrides the auto-generated one.</p>
+              </div>
             </div>
           )}
         </div>

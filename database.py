@@ -285,6 +285,29 @@ def update_call_note(call_sid: str, note: str, phone: str = ""):
         cursor.execute("UPDATE leads SET status = 'Summarized', follow_up_note = %s WHERE phone LIKE %s", (note, f"%{phone_str}%"))
     conn.close()
 
+def log_call_status(phone: str, call_status: str, error_msg: str = ""):
+    conn = get_conn()
+    cursor = conn.cursor()
+    phone_clean = "".join(filter(str.isdigit, str(phone)))
+    if len(phone_clean) > 10:
+        phone_clean = phone_clean[-10:]  # Match last 10 digits
+        
+    status_label = f"Call Failed ({call_status})"
+    if call_status.lower() in ["completed", "in-progress", "ringing", "answered"]:
+        status_label = "Calling..."
+    
+    note_update = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Telecom Status: {call_status.upper()}"
+    if error_msg:
+        note_update += f" | Details: {error_msg}"
+        
+    cursor.execute('''
+        UPDATE leads 
+        SET status = %s, follow_up_note = CONCAT_WS('\\n', %s, IFNULL(follow_up_note, ''))
+        WHERE phone LIKE %s
+    ''', (status_label, note_update, f"%{phone_clean}%"))
+    
+    conn.close()
+
 def get_all_sites(org_id: int) -> List[Dict]:
     conn = get_conn()
     cursor = conn.cursor()
@@ -704,9 +727,11 @@ def get_all_products():
     conn.close()
     return rows
 
-def get_product_knowledge_context() -> str:
+def get_product_knowledge_context(org_id=None) -> str:
     """Build product knowledge string for injecting into LLM system prompt."""
     products = get_all_products()
+    if org_id:
+        products = [p for p in products if p.get('org_id') == org_id]
     if not products:
         return ""
     parts = []
@@ -718,3 +743,39 @@ def get_product_knowledge_context() -> str:
             info += f" | Admin notes: {p['manual_notes']}"
         parts.append(info)
     return "\n\n[PRODUCT KNOWLEDGE - Yeh information use karo jab user product ke baare mein puchhe]:\n" + "\n".join(parts)
+
+def get_org_custom_prompt(org_id: int) -> str:
+    """Get the custom system prompt for an organization, or empty string."""
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute("SELECT custom_system_prompt FROM organizations WHERE id = %s", (org_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return (row.get('custom_system_prompt') or '') if row else ''
+
+def save_org_custom_prompt(org_id: int, prompt_text: str):
+    """Save a custom system prompt override for an organization."""
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE organizations SET custom_system_prompt = %s WHERE id = %s", (prompt_text, org_id))
+    conn.close()
+    return True
+
+def get_org_voice_settings(org_id: int) -> dict:
+    """Get TTS provider, voice ID, and language for an organization."""
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute("SELECT tts_provider, tts_voice_id, tts_language FROM organizations WHERE id = %s", (org_id,))
+    row = cursor.fetchone()
+    conn.close()
+    if not row:
+        return {"tts_provider": "elevenlabs", "tts_voice_id": None, "tts_language": "hi"}
+    return {"tts_provider": row.get("tts_provider") or "elevenlabs", "tts_voice_id": row.get("tts_voice_id"), "tts_language": row.get("tts_language") or "hi"}
+
+def save_org_voice_settings(org_id: int, tts_provider: str, tts_voice_id: str, tts_language: str = "hi"):
+    """Save TTS voice settings for an organization."""
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE organizations SET tts_provider = %s, tts_voice_id = %s, tts_language = %s WHERE id = %s", (tts_provider, tts_voice_id, tts_language, org_id))
+    conn.close()
+    return True

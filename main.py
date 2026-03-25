@@ -6,7 +6,7 @@ import urllib.parse
 import asyncio
 import httpx
 from dotenv import load_dotenv
-from fastapi import FastAPI, BackgroundTasks, Request, Body, Header, HTTPException, WebSocket, APIRouter, Depends, UploadFile, File
+from fastapi import FastAPI, BackgroundTasks, Request, Body, Header, HTTPException, WebSocket, APIRouter, Depends, UploadFile, File, Form
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -31,6 +31,8 @@ from database import get_all_pronunciations, add_pronunciation, delete_pronuncia
 from database import save_call_transcript, get_transcripts_by_lead
 from database import create_organization, get_all_organizations, delete_organization
 from database import create_product, get_products_by_org, update_product, delete_product, get_product_knowledge_context
+from database import get_org_custom_prompt, save_org_custom_prompt
+from database import get_org_voice_settings, save_org_voice_settings
 import importlib
 import inspect
 from crm_providers import BaseCRM
@@ -421,8 +423,12 @@ def api_get_transcripts(lead_id: int):
 # ─── Organizations & Products API ───
 
 @app.get("/api/organizations")
-def api_get_organizations():
-    return get_all_organizations()
+def api_get_organizations(current_user: dict = Depends(get_current_user)):
+    all_orgs = get_all_organizations()
+    user_org_id = current_user.get("org_id")
+    if user_org_id:
+        return [o for o in all_orgs if o["id"] == user_org_id]
+    return all_orgs
 
 @app.post("/api/organizations")
 def api_create_organization(payload: dict):
@@ -453,9 +459,65 @@ def api_delete_product_endpoint(product_id: int):
     delete_product(product_id)
     return {"status": "ok"}
 
+@app.get("/api/organizations/{org_id}/system-prompt")
+def api_get_system_prompt(org_id: int, current_user: dict = Depends(get_current_user)):
+    """Return auto-generated product knowledge prompt and any custom override."""
+    auto_prompt = get_product_knowledge_context(org_id=org_id)
+    custom_prompt = get_org_custom_prompt(org_id)
+    return {"auto_generated": auto_prompt, "custom_prompt": custom_prompt}
+
+@app.put("/api/organizations/{org_id}/system-prompt")
+def api_save_system_prompt(org_id: int, payload: dict, current_user: dict = Depends(get_current_user)):
+    """Save a custom system prompt override for an organization."""
+    save_org_custom_prompt(org_id, payload.get("custom_prompt", ""))
+    return {"status": "ok"}
+
+@app.get("/api/organizations/{org_id}/voice-settings")
+def api_get_voice_settings(org_id: int, current_user: dict = Depends(get_current_user)):
+    return get_org_voice_settings(org_id)
+
+@app.put("/api/organizations/{org_id}/voice-settings")
+def api_save_voice_settings(org_id: int, payload: dict, current_user: dict = Depends(get_current_user)):
+    save_org_voice_settings(org_id, payload.get("tts_provider", "elevenlabs"), payload.get("tts_voice_id", ""), payload.get("tts_language", "hi"))
+    return {"status": "ok"}
+
+@app.post("/api/upload-recording")
+async def api_upload_recording(current_user: dict = Depends(get_current_user), file: UploadFile = File(...), lead_id: str = Form("")):
+    """Upload a client-recorded call (webm from MediaRecorder)."""
+    import logging
+    _ul = logging.getLogger("uvicorn.error")
+    rec_dir = os.path.join(os.path.dirname(__file__), "recordings")
+    os.makedirs(rec_dir, exist_ok=True)
+    fname = file.filename or f"call_{lead_id}_{int(__import__('time').time())}.webm"
+    fpath = os.path.join(rec_dir, fname)
+    contents = await file.read()
+    with open(fpath, "wb") as f:
+        f.write(contents)
+    _ul.info(f"[RECORDING] Client upload saved: {fpath} ({len(contents)} bytes)")
+    # Update latest transcript for this lead with the recording URL
+    if lead_id and lead_id.isdigit():
+        rec_url = f"/api/recordings/{fname}"
+        try:
+            from database import get_conn
+            conn = get_conn()
+            cur = conn.cursor()
+            # Use subquery to find latest transcript ID for this lead
+            cur.execute("SELECT id FROM call_transcripts WHERE lead_id = %s ORDER BY id DESC LIMIT 1", (int(lead_id),))
+            row = cur.fetchone()
+            if row:
+                cur.execute("UPDATE call_transcripts SET recording_url = %s WHERE id = %s", (rec_url, row['id']))
+                _ul.info(f"[RECORDING] Updated transcript {row['id']} with URL: {rec_url}")
+            else:
+                _ul.warning(f"[RECORDING] No transcript found for lead {lead_id}")
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            _ul.error(f"[RECORDING] DB update error: {e}")
+    return {"status": "ok", "url": f"/api/recordings/{fname}"}
+
 @app.post("/api/products/{product_id}/scrape")
 async def api_scrape_product_website(product_id: int):
-    """Fetch a product's website and use LLM to extract key info."""
+    """Fetch a product's website (or research by name) and use LLM to extract key info."""
     from database import get_products_by_org as _gp
     import logging
     logger = logging.getLogger("uvicorn.error")
@@ -467,34 +529,51 @@ async def api_scrape_product_website(product_id: int):
     product = cursor.fetchone()
     conn.close()
     
-    if not product or not product.get('website_url'):
-        return {"status": "error", "message": "Product not found or no website URL"}
+    if not product:
+        return {"status": "error", "message": "Product not found"}
     
-    url = product['website_url'].strip()
-    if not url.startswith("http"):
-        url = "https://" + url
+    url = (product.get('website_url') or '').strip()
+    product_name = product.get('name', '')
+    html = ""
     
-    # Step 1: Fetch website HTML
-    try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(url, timeout=15, follow_redirects=True)
-            html = resp.text[:15000]
-    except Exception as e:
-        logger.error(f"[SCRAPE] Failed to fetch {url}: {e}")
-        return {"status": "error", "message": f"Could not fetch website: {str(e)}"}
+    # Step 1: Try to fetch website HTML if URL provided
+    if url:
+        if not url.startswith("http"):
+            url = "https://" + url
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(url, timeout=15, follow_redirects=True)
+                html = resp.text[:15000]
+        except Exception as e:
+            logger.error(f"[SCRAPE] Failed to fetch {url}: {e}")
+            html = ""  # Fall through to name-based research
     
-    # Step 2: Use LLM to extract product info
-    scrape_prompt = (
-        "You are a product analyst. Given this website HTML, extract the following in a concise format:\n"
-        "1. Company name\n"
-        "2. What the product/service does (2-3 sentences)\n"
-        "3. Key features (bullet points)\n"
-        "4. Target audience\n"
-        "5. Pricing (if visible)\n"
-        "6. Contact info\n\n"
-        "Be concise — max 500 words. Only include information that is clearly stated on the page.\n\n"
-        f"WEBSITE HTML:\n{html}"
-    )
+    # Step 2: Use LLM to extract/research product info
+    if html:
+        scrape_prompt = (
+            "You are a product analyst. Given this website HTML, extract the following in a concise format:\n"
+            "1. Company name\n"
+            "2. What the product/service does (2-3 sentences)\n"
+            "3. Key features (bullet points)\n"
+            "4. Target audience\n"
+            "5. Pricing (if visible)\n"
+            "6. Contact info\n\n"
+            "Be concise — max 500 words. Only include information that is clearly stated on the page.\n\n"
+            f"WEBSITE HTML:\n{html}"
+        )
+    else:
+        # No URL or fetch failed — research by product name
+        scrape_prompt = (
+            f"You are a product analyst. Research and provide detailed information about the product/service called '{product_name}'.\n"
+            f"Provide the following in a concise format:\n"
+            f"1. What is {product_name}? (2-3 sentences)\n"
+            f"2. Key features and capabilities\n"
+            f"3. Target audience / who uses it\n"
+            f"4. How it works (brief overview)\n"
+            f"5. Key benefits / value proposition\n"
+            f"6. Pricing model (if known)\n\n"
+            f"Be concise — max 500 words. If you don't have specific info, provide general knowledge about this type of product."
+        )
     
     try:
         groq_key = os.getenv("GROQ_API_KEY", "")
@@ -667,7 +746,11 @@ async def dial_twilio(lead: dict):
     )
     try:
         call = client.calls.create(
-            url=twiml_url, to=lead["phone_number"], from_=TWILIO_PHONE_NUMBER
+            url=twiml_url, 
+            to=lead["phone_number"], 
+            from_=TWILIO_PHONE_NUMBER,
+            status_callback=f"{PUBLIC_URL}/webhook/twilio/status",
+            status_callback_event=['completed', 'no-answer', 'busy', 'failed', 'canceled']
         )
         print(f"Twilio Call Triggered. SID: {call.sid}")
     except Exception as e:
@@ -701,6 +784,7 @@ async def dial_exotel(lead: dict):
         "CallerId": EXOTEL_CALLER_ID,
         "Url": exoml_url,
         "CallType": "trans",
+        "StatusCallback": f"{PUBLIC_URL}/webhook/exotel/status"
     }
     logger.info(f"[DIAL] Exotel attempt: From={phone_clean}, ExoML={exoml_url}")
     call_logger.call_event(phone_clean, "DIAL_INITIATED", f"From={phone_clean}, Url={exoml_url}")
@@ -800,17 +884,24 @@ async def dynamic_webhook(provider: str, request: Request):
     )
 
 
+# Module-level dict to collect TTS audio for recording per stream
+_tts_recording_buffers: dict = {}
+
 async def synthesize_and_send_audio(
-    text: str, stream_sid: str, websocket: WebSocket
+    text: str, stream_sid: str, websocket: WebSocket,
+    tts_provider_override: str = None, tts_voice_override: str = None, tts_language_override: str = None
 ):
     import logging
     import struct
     import audioop
     tts_logger = logging.getLogger("uvicorn.error")
     tts_logger.info(f"TTS START: text='{text[:60]}...', sid={stream_sid}")
-    is_exotel = not stream_sid.startswith("SM")
+    is_browser_sim = stream_sid.startswith("web_sim_")
+    is_exotel = not stream_sid.startswith("SM") and not is_browser_sim
+    # Browser sim needs raw PCM just like Exotel (not u-law)
+    needs_raw_pcm = is_exotel or is_browser_sim
     
-    tts_provider = os.getenv("TTS_PROVIDER", "elevenlabs").lower()
+    tts_provider = (tts_provider_override or os.getenv("TTS_PROVIDER", "elevenlabs")).lower()
     
     if tts_provider == "smallest":
         # Smallest AI Lightning V3 TTS
@@ -821,12 +912,12 @@ async def synthesize_and_send_audio(
         }
         payload = {
             "text": text,
-            "voice_id": os.getenv("SMALLEST_VOICE_ID", "emily"),
+            "voice_id": tts_voice_override or os.getenv("SMALLEST_VOICE_ID", "emily"),
             "sample_rate": 8000,
             "add_wav_header": False,
             "speed": 1.0
         }
-        tts_logger.info(f"TTS: provider=SmallestAI, is_exotel={is_exotel}")
+        tts_logger.info(f"TTS: provider=SmallestAI, is_exotel={is_exotel}, is_browser_sim={is_browser_sim}")
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 async with client.stream("POST", url, json=payload, headers=headers) as response:
@@ -837,8 +928,8 @@ async def synthesize_and_send_audio(
                     chunk_count = 0
                     async for chunk in response.aiter_bytes(chunk_size=1024):
                         if chunk:
-                            if is_exotel:
-                                # Exotel natively wants raw 8kHz Linear PCM (16-bit)
+                            if needs_raw_pcm:
+                                # Exotel and Browser Sim both want raw 8kHz Linear PCM (16-bit)
                                 b64_chunk = base64.b64encode(chunk).decode('utf-8')
                             else:
                                 # Twilio wants 8kHz u-law
@@ -857,22 +948,28 @@ async def synthesize_and_send_audio(
             
     else:
         # ElevenLabs TTS Fallback/Default
-        if is_exotel:
-            output_format = "pcm_16000"  # Downsampled to 8kHz inline
+        if needs_raw_pcm:
+            output_format = "pcm_16000"  # Downsampled to 8kHz inline for both Exotel and Browser
         else:
             output_format = "ulaw_8000"
             
         url = (
             f"https://api.elevenlabs.io/v1/text-to-speech/"
-            f"{os.getenv('ELEVENLABS_VOICE_ID')}/stream?output_format={output_format}&optimize_streaming_latency=3"
+            f"{tts_voice_override or os.getenv('ELEVENLABS_VOICE_ID')}/stream?output_format={output_format}&optimize_streaming_latency=3"
         )
         headers = {"xi-api-key": os.getenv("ELEVENLABS_API_KEY")}
         payload = {
             "text": text,
-            "model_id": "eleven_flash_v2_5",
-            "voice_settings": {"stability": 0.5, "similarity_boost": 0.75},
+            "model_id": "eleven_turbo_v2_5",
+            "language_code": tts_language_override or "hi",
+            "voice_settings": {
+                "stability": 0.35, 
+                "similarity_boost": 0.85,
+                "style": 0.1,
+                "use_speaker_boost": True
+            },
         }
-        tts_logger.info(f"TTS: provider=ElevenLabs, is_exotel={is_exotel}, format={output_format}")
+        tts_logger.info(f"TTS: provider=ElevenLabs, is_exotel={is_exotel}, is_browser_sim={is_browser_sim}, format={output_format}")
         
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
@@ -885,29 +982,39 @@ async def synthesize_and_send_audio(
                         return
                     chunk_count = 0
                     pcm_buffer = b""
+                    audio_state = None
                     async for chunk in response.aiter_bytes(chunk_size=640):
                         if chunk:
-                            if is_exotel:
-                                # Downsample 16kHz to 8kHz for ElevenLabs PCM Exotel output
+                            if needs_raw_pcm:
+                                # Downsample 16kHz to 8kHz for ElevenLabs PCM output
                                 pcm_buffer += chunk
                                 usable = len(pcm_buffer) - (len(pcm_buffer) % 4)
-                                if usable >= 320:
+                                if usable >= 1280:  # 1280 bytes of 16kHz 16-bit = 640 samples = 40ms
                                     raw = pcm_buffer[:usable]
                                     pcm_buffer = pcm_buffer[usable:]
-                                    downsampled = b"".join(raw[i:i+2] for i in range(0, len(raw), 4))
+                                    import audioop
+                                    downsampled, audio_state = audioop.ratecv(raw, 2, 1, 16000, 8000, audio_state)
                                     b64_chunk = base64.b64encode(downsampled).decode('utf-8')
                                     await websocket.send_text(json.dumps({
                                         "event": "media",
                                         "stream_sid": stream_sid,
                                         "media": {"payload": b64_chunk}
                                     }))
+                                    # Capture for call recording (with timestamp)
+                                    if stream_sid in _tts_recording_buffers:
+                                        import time as _tts_t
+                                        _tts_recording_buffers[stream_sid].append((_tts_t.time(), downsampled))
                                     chunk_count += 1
+                                    # Output is 640 bytes of 8kHz 16-bit = 320 samples = 40ms of audio.
+                                    await asyncio.sleep(0.020)  # Pace to 20ms (2x realtime) to build jitter buffer gracefully
                             else:
                                 await websocket.send_text(json.dumps({
                                     "event": "media",
                                     "streamSid": stream_sid,
                                     "media": {"payload": base64.b64encode(chunk).decode('utf-8')}
                                 }))
+                                # 640 bytes of 8kHz ulaw = 640 samples = 80ms audio. Pace slightly under to prevent lag.
+                                await asyncio.sleep(0.070)
                                 chunk_count += 1
                     tts_logger.info(f"TTS ElevenLabs END: sent {chunk_count} chunks.")
         except asyncio.CancelledError:
@@ -924,12 +1031,47 @@ async def handle_media_stream(websocket: WebSocket):
     interest = websocket.query_params.get("interest", "") or ""
     lead_phone = websocket.query_params.get("phone", "") or ""
     _call_lead_id = None
+    # Extract lead_id from query params (browser sim) or pending_call_info (Exotel)
+    _qp_lead_id = websocket.query_params.get("lead_id", "")
+    if _qp_lead_id and _qp_lead_id.isdigit():
+        _call_lead_id = int(_qp_lead_id)
+    # Voice override from sandbox/sim call query params
+    _tts_provider_override = websocket.query_params.get("tts_provider", None) or None
+    _tts_voice_override = websocket.query_params.get("voice", None) or None
+    _tts_language_override = websocket.query_params.get("tts_language", None) or None
+    # If no override passed, look up org voice settings from DB
+    if not _tts_voice_override:
+        try:
+            from database import get_conn as _gc
+            _vc = _gc()
+            _vcur = _vc.cursor()
+            # Find org_id from the lead or from the first user
+            _org_for_voice = None
+            if _call_lead_id:
+                _vcur.execute("SELECT org_id FROM leads WHERE id = %s", (_call_lead_id,))
+                _lr = _vcur.fetchone()
+                if _lr and _lr.get('org_id'):
+                    _org_for_voice = _lr['org_id']
+            if not _org_for_voice:
+                _vcur.execute("SELECT org_id FROM users LIMIT 1")
+                _ur = _vcur.fetchone()
+                if _ur: _org_for_voice = _ur.get('org_id')
+            _vc.close()
+            if _org_for_voice:
+                _vs = get_org_voice_settings(_org_for_voice)
+                if _vs.get('tts_voice_id'):
+                    _tts_voice_override = _vs['tts_voice_id']
+                    _tts_provider_override = _vs.get('tts_provider', 'elevenlabs')
+                _tts_language_override = _tts_language_override or _vs.get('tts_language', 'hi')
+        except Exception:
+            pass
     if not lead_name or lead_name == "Customer":
         info = pending_call_info.get("latest", {})
         lead_name = info.get("name", "Customer")
         interest = info.get("interest", "our platform") if not interest else interest
         lead_phone = info.get("phone", "") if not lead_phone else lead_phone
-        _call_lead_id = info.get("lead_id")
+        if not _call_lead_id:
+            _call_lead_id = info.get("lead_id")
     _exotel_call_sid = (pending_call_info.get("latest", {}).get("exotel_call_sid") or "")
     _call_start_time = __import__('time').time()
     stream_sid = None
@@ -937,24 +1079,47 @@ async def handle_media_stream(websocket: WebSocket):
     chat_history = []
     _llm_lock = asyncio.Lock()  # Turn guard: only one LLM call at a time
     _last_transcript_time = [0.0]  # Debounce timer for rapid transcripts
-    _debounce_delay = 1.5  # seconds to wait before processing
+    _debounce_delay = 0.4  # seconds to wait before processing
+    # Audio recording buffers (collect 8kHz 16-bit PCM for WAV)
+    _recording_mic_chunks = []   # (timestamp, bytes) raw mic audio from browser/Exotel
+    _recording_tts_chunks = []   # (timestamp, bytes) TTS audio sent back to caller
 
     # Load pronunciation guide for TTS-correct product names
     pronunciation_ctx = get_pronunciation_context()
 
-    # Load product knowledge for system prompt
-    product_ctx = get_product_knowledge_context()
+    # Load product knowledge for system prompt (prefer custom prompt if set)
+    product_ctx = ""
+    try:
+        # Try to get org-specific prompt from users table
+        _user_conn = __import__('database').get_conn()
+        _user_cursor = _user_conn.cursor()
+        _user_cursor.execute("SELECT u.org_id FROM users u JOIN leads l ON 1=1 WHERE l.id = %s LIMIT 1", (_call_lead_id,))
+        _user_row = _user_cursor.fetchone()
+        _call_org_id = _user_row.get('org_id') if _user_row else None
+        _user_conn.close()
+        if _call_org_id:
+            custom = get_org_custom_prompt(_call_org_id)
+            if custom.strip():
+                product_ctx = "\n\n[PRODUCT KNOWLEDGE]:\n" + custom
+            else:
+                product_ctx = get_product_knowledge_context(org_id=_call_org_id)
+        else:
+            product_ctx = get_product_knowledge_context()
+    except Exception:
+        product_ctx = get_product_knowledge_context()
 
     dynamic_context = (
         f"Tum Arjun ho — ek friendly, professional lead qualifier. Tum {lead_name} ko call kar rahe ho. "
         f"Tumhare records mein hai ki unhone {interest} ke baare mein ek form bhara tha website par. "
-        f"\n\nTUMHARA ROLE: Tum SIRF lead qualify karne ke liye call kar rahe ho. Tum SALESMAN NAHI ho. "
+        f"\n\nTUMHARA ROLE: Tum lead qualify karne ke liye call kar rahe ho aur product ke baare mein briefly bata sakte ho. "
         f"Tumhara kaam hai: "
         f"(a) Confirm karo ki unhone sach mein form bhara tha ya nahi. "
         f"(b) Agar haan, toh puchho ki unhe abhi bhi interest hai ya nahi. "
-        f"(c) Agar interest hai, toh ek appointment/callback schedule karo — puchho ki kab free hain, "
+        f"(c) Agar user PRODUCT ke baare mein puchhe ('kya hai ye?', 'ye kya karta hai?'), toh PRODUCT KNOWLEDGE section se "
+        f"    1-2 line mein briefly batao ki product kya hai aur kya karta hai. PHIR bolo ki 'isse detail mein humara senior representative samjhayega, "
+        f"    main aapke liye ek meeting schedule kar deta hoon.' "
+        f"(d) Agar interest hai, toh ek appointment/callback schedule karo — puchho ki kab free hain, "
         f"    aur bolo ki humara senior representative unhe us time call karega. "
-        f"(d) Kabhi bhi product ke features, pricing ya details mat batao. Woh kaam real SDR karega. "
         f"\n\nCONVERSATION RULES: "
         f"1. SUNNA PEHLE: User jo bole, pehle samjho, phir respond karo. User ki baat ignore mat karo. "
         f"2. FORM DENIAL: Agar user bole 'maine form nahi bhara', 'yaad nahi', 'nahi kiya' — toh MAAN JAO. "
@@ -963,8 +1128,8 @@ async def handle_media_stream(websocket: WebSocket):
         f"4. INTERESTED: Agar user interested hai, toh puchho 'achha great, toh aap kab free honge? Humara representative aapko detail mein baat karega.' "
         f"   Unka preferred time le lo aur bolo ki call scheduled hai. "
         f"5. SHORT RESPONSES: 1-2 sentences max. Phone pe chhota bolo, jaise real person baat karta hai. "
-        f"IMPORTANT LANGUAGE RULE: SIRF ROMAN HINDI/ENGLISH likhna hai. KABHI BHI Devanagari script (à¤¹à¤¿à¤¨à¥à¤¦à¥) mat use karo. "
-        f"Example — WRONG: à¤¨à¤®à¤¸à¥à¤¤à¥. CORRECT: Namaste. Hamesha Roman letters mein likho. "
+        f"IMPORTANT LANGUAGE RULE: SIRF ROMAN HINDI/ENGLISH likhna hai. KABHI BHI Devanagari script mat use karo. "
+        f"Hamesha Roman letters mein likho jaise: Namaste, Achha, Bilkul. "
         f"6. LANGUAGE: Natural Hindi-Hinglish. 'haan', 'bilkul', 'achha', 'zaroor' use karo. "
         f"7. NO FORMATTING: Kabhi markdown, asterisks, bold, bullets mat use karo. "
         f"8. IDENTITY: Tum Arjun ho, ek human. Kabhi mat bolo ki tum AI ho. "
@@ -983,17 +1148,22 @@ async def handle_media_stream(websocket: WebSocket):
     dg_connection = dg_client.listen.websocket.v("1")
     loop = asyncio.get_event_loop()
 
+    def on_error(self, error, **kwargs):
+        import logging
+        logging.getLogger("uvicorn.error").error(f"[STT ERROR] Deepgram fired an error: {error}")
+
     def on_speech_started(self, **kwargs):
         """Barge-in: cancel TTS when user starts speaking."""
+        import json as _json
         if stream_sid:
             asyncio.run_coroutine_threadsafe(
                 websocket.send_text(
-                    json.dumps({"event": "clear", "streamSid": stream_sid})
+                    _json.dumps({"event": "clear", "streamSid": stream_sid})
                 ),
                 loop,
             )
         if stream_sid in active_tts_tasks and not active_tts_tasks[stream_sid].done():
-            active_tts_tasks[stream_sid].cancel()
+            loop.call_soon_threadsafe(active_tts_tasks[stream_sid].cancel)
 
     def on_message(self, result, **kwargs):
         """Handle final transcription → LLM → TTS pipeline."""
@@ -1004,100 +1174,127 @@ async def handle_media_stream(websocket: WebSocket):
             conv_logger.info(f"[STT] USER SAID: {sentence}")
             if stream_sid:
                 call_logger.call_event(stream_sid, "STT_TRANSCRIPT", sentence[:100])
+            # Send user transcript to client for live display
+            try:
+                asyncio.run_coroutine_threadsafe(websocket.send_json({"event": "user_speech", "text": sentence}), loop)
+            except Exception:
+                pass
             chat_history.append({"role": "user", "parts": [{"text": sentence}]})
 
             async def _process_transcript():
-                import time as _time
-                t_start = _time.time()
-                _last_transcript_time[0] = t_start
+                try:
+                    import time as _time
+                    t_start = _time.time()
+                    _last_transcript_time[0] = t_start
 
-                # Debounce: wait before processing to batch rapid transcripts
-                await asyncio.sleep(_debounce_delay)
+                    # Debounce: wait before processing to batch rapid transcripts
+                    await asyncio.sleep(_debounce_delay)
 
-                # If a newer transcript arrived during the wait, skip this one
-                if _last_transcript_time[0] != t_start:
-                    import logging
-                    logging.getLogger("uvicorn.error").info(f"[DEBOUNCE] Skipping older transcript — newer one pending.")
-                    return
+                    # If a newer transcript arrived during the wait, skip this one
+                    if _last_transcript_time[0] != t_start:
+                        import logging
+                        logging.getLogger("uvicorn.error").info(f"[DEBOUNCE] Skipping older transcript — newer one pending.")
+                        return
 
-                # Turn guard: skip if another LLM call is already in flight
-                if _llm_lock.locked():
-                    import logging
-                    logging.getLogger("uvicorn.error").info(f"[TURN_GUARD] Skipping — LLM already processing.")
-                    return
+                    # Turn guard: skip if another LLM call is already in flight
+                    if _llm_lock.locked():
+                        import logging
+                        logging.getLogger("uvicorn.error").info(f"[TURN_GUARD] Skipping — LLM already processing.")
+                        return
 
-                async with _llm_lock:
-                    if stream_sid:
-                        for monitor in monitor_connections.get(stream_sid, set()):
-                            try:
-                                await monitor.send_json({"type": "transcript", "role": "user", "text": sentence})
-                            except Exception:
-                                pass
-
-                        if takeover_active.get(stream_sid, False):
-                            return  # Skip LLM generation if human took over
-
-                        pending = whisper_queues.get(stream_sid, [])
-                        if pending:
-                            for whisper in pending:
-                                chat_history.append({"role": "user", "parts": [{"text": f"Manager Whisper: {whisper}. Acknowledge this implicitly in your next response."}]})
-                            pending.clear()
-
-                    # RAG Retrieval — skip if no knowledge base loaded
-                    rag_context = ""
-                    if knowledge_collection and knowledge_collection.count() > 0:
-                        try:
-                            import google.generativeai as gai
-                            gai.configure(api_key=os.getenv("GEMINI_API_KEY", "dummy"))
-                            res = gai.embed_content(model="models/text-embedding-004", content=sentence, task_type="retrieval_query")
-                            query_emb = res['embedding']
-                            results = knowledge_collection.query(query_embeddings=[query_emb], n_results=2)
-                            if results and results.get('documents') and results['documents'][0]:
-                                docs = results['documents'][0]
-                                rag_context = "\n[KNOWLEDGE BASE RELEVANT INFO]:\n" + "\n---\n".join(docs)
-                        except Exception as e:
-                            print(f"RAG error: {e}")
-
-                    t_pre_llm = _time.time()
-                    final_system_instruction = dynamic_context + rag_context
-
-                    try:
-                        import llm_provider
-                        response_text = await llm_provider.generate_response(
-                            chat_history=chat_history,
-                            system_instruction=final_system_instruction,
-                            max_tokens=150,
-                        )
-                        t_post_llm = _time.time()
-
-                        chat_history.append(
-                            {"role": "model", "parts": [{"text": response_text}]}
-                        )
-                        conv_logger.info(f"[LLM] AI RESPONSE: {response_text[:200]}")
-                        if stream_sid:
-                            call_logger.call_event(stream_sid, "LLM_RESPONSE", response_text[:100], llm_time_s=round(t_post_llm - t_pre_llm, 3))
-
+                    async with _llm_lock:
                         if stream_sid:
                             for monitor in monitor_connections.get(stream_sid, set()):
                                 try:
-                                    await monitor.send_json({"type": "transcript", "role": "agent", "text": response_text})
+                                    await monitor.send_json({"type": "transcript", "role": "user", "text": sentence})
                                 except Exception:
                                     pass
-                    except Exception as e:
-                        import traceback
-                        conv_logger.error(f"Error fetching LLM response: {e}")
-                        conv_logger.error(traceback.format_exc())
-                        return
 
-                    if stream_sid:
-                        import re
-                        clean_text = re.sub(r'[\*\_\#\`\~\>\|]', '', response_text)
-                        clean_text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', clean_text)
-                        clean_text = clean_text.strip()
-                        conv_logger.info(f"TIMING: pre_llm={t_pre_llm - t_start:.2f}s, llm={t_post_llm - t_pre_llm:.2f}s, total_to_tts={_time.time() - t_start:.2f}s")
-                        active_tts_tasks[stream_sid] = asyncio.create_task(
-                            synthesize_and_send_audio(clean_text, stream_sid, websocket)
-                        )
+                            if takeover_active.get(stream_sid, False):
+                                return  # Skip LLM generation if human took over
+
+                            pending = whisper_queues.get(stream_sid, [])
+                            if pending:
+                                for whisper in pending:
+                                    chat_history.append({"role": "user", "parts": [{"text": f"Manager Whisper: {whisper}. Acknowledge this implicitly in your next response."}]})
+                                pending.clear()
+
+                        # RAG Retrieval — skip if no knowledge base loaded
+                        rag_context = ""
+                        if knowledge_collection and knowledge_collection.count() > 0:
+                            try:
+                                import google.generativeai as gai
+                                gai.configure(api_key=os.getenv("GEMINI_API_KEY", "dummy"))
+                                loop = asyncio.get_event_loop()
+                                res = await loop.run_in_executor(
+                                    None,
+                                    lambda: gai.embed_content(model="models/text-embedding-004", content=sentence, task_type="retrieval_query")
+                                )
+                                query_emb = res['embedding']
+                                results = knowledge_collection.query(query_embeddings=[query_emb], n_results=2)
+                                if results and results.get('documents') and results['documents'][0]:
+                                    docs = results['documents'][0]
+                                    rag_context = "\n[KNOWLEDGE BASE RELEVANT INFO]:\n" + "\n---\n".join(docs)
+                            except Exception as e:
+                                print(f"RAG error: {e}")
+
+                        t_pre_llm = _time.time()
+                        final_system_instruction = dynamic_context + rag_context
+
+                        try:
+                            import llm_provider
+                            response_text = await llm_provider.generate_response(
+                                chat_history=chat_history,
+                                system_instruction=final_system_instruction,
+                                max_tokens=150,
+                            )
+                            t_post_llm = _time.time()
+
+                            chat_history.append(
+                                {"role": "model", "parts": [{"text": response_text}]}
+                            )
+                            conv_logger.info(f"[LLM] AI RESPONSE: {response_text[:200]}")
+                            # Send AI response transcript to client for live display
+                            try:
+                                await websocket.send_json({"event": "llm_response", "text": response_text})
+                            except Exception:
+                                pass
+                            if stream_sid:
+                                call_logger.call_event(stream_sid, "LLM_RESPONSE", response_text[:100], llm_time_s=round(t_post_llm - t_pre_llm, 3))
+
+                            if stream_sid:
+                                for monitor in monitor_connections.get(stream_sid, set()):
+                                    try:
+                                        await monitor.send_json({"type": "transcript", "role": "agent", "text": response_text})
+                                    except Exception:
+                                        pass
+                        except Exception as e:
+                            import traceback
+                            conv_logger.error(f"Error fetching LLM response: {e}")
+                            conv_logger.error(traceback.format_exc())
+                            return
+
+                        if stream_sid:
+                            import re
+                            clean_text = re.sub(r'[\*\_\#\`\~\>\|]', '', response_text)
+                            clean_text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', clean_text)
+                            clean_text = clean_text.strip()
+                            conv_logger.info(f"TIMING: pre_llm={t_pre_llm - t_start:.2f}s, llm={t_post_llm - t_pre_llm:.2f}s, total_to_tts={_time.time() - t_start:.2f}s")
+                            # Cancel any still-running TTS before starting new one
+                            if stream_sid in active_tts_tasks and not active_tts_tasks[stream_sid].done():
+                                active_tts_tasks[stream_sid].cancel()
+                                try:
+                                    await active_tts_tasks[stream_sid]
+                                except (asyncio.CancelledError, Exception):
+                                    pass
+                            active_tts_tasks[stream_sid] = asyncio.create_task(
+                                synthesize_and_send_audio(clean_text, stream_sid, websocket, _tts_provider_override, _tts_voice_override, _tts_language_override)
+                            )
+                except Exception as _crash:
+                    import logging
+                    import traceback
+                    logging.getLogger("uvicorn.error").error(f"[SYSTEM FATAL] _process_transcript SILENT CRASH: {_crash}")
+                    logging.getLogger("uvicorn.error").error(traceback.format_exc())
 
             asyncio.run_coroutine_threadsafe(_process_transcript(), loop)
 
@@ -1114,6 +1311,7 @@ async def handle_media_stream(websocket: WebSocket):
             endpointing=300,
             interim_results=True,
             utterance_end_ms=1000,
+            vad_events=True,
         )
     )
 
@@ -1129,10 +1327,11 @@ async def handle_media_stream(websocket: WebSocket):
             try:
                 msg = await websocket.receive()
             except Exception as e:
-                print(f"Websocket connection closed or error: {e}")
+                ws_logger.error(f"[WS RECV ERROR] Connection lost: {e}")
                 break
 
             if msg.get("type") == "websocket.disconnect":
+                ws_logger.info(f"[WS DISCONNECT] Client sent disconnect frame, sid={stream_sid}")
                 break
 
             # Handle binary frames (Exotel sends raw audio bytes)
@@ -1147,11 +1346,12 @@ async def handle_media_stream(websocket: WebSocket):
                     takeover_active[stream_sid] = False
                     ws_logger.info(f"[WS] Exotel binary stream started, sid={stream_sid}")
                     call_logger.call_event(stream_sid, "WS_CONNECTED", f"name={lead_name}, phone={lead_phone}")
+                    _tts_recording_buffers[stream_sid] = []
 
                 # Send greeting on first audio frame
                 if not greeting_sent:
                     greeting_sent = True
-                    greeting_text = f"Hello {lead_name} ji! Kaise hain aap? Mai Arjun bol raha hu Adsgpt se. Aapne hamare site pe enquiry ki thi, bas 2 minute baat kar sakte hain?"
+                    greeting_text = f"हैलो {lead_name} जी? मैं AdsGPT से बात कर रहा हूँ, आपने हमारे AI platform के regarding enquiry की थी?"
                     # Add greeting to chat history so LLM knows what it already said
                     chat_history.append({"role": "model", "parts": [{"text": greeting_text}]})
                     ws_logger.info(f"[GREETING] Sending greeting for {lead_name}")
@@ -1161,6 +1361,9 @@ async def handle_media_stream(websocket: WebSocket):
                             greeting_text,
                             stream_sid,
                             websocket,
+                            _tts_provider_override,
+                            _tts_voice_override,
+                            _tts_language_override,
                         )
                     )
 
@@ -1188,28 +1391,34 @@ async def handle_media_stream(websocket: WebSocket):
                         or data.get("start", {}).get("streamSid")
                         or f"exotel-{_uuid.uuid4().hex[:12]}"
                     )
-                    if data.get("stream_sid"):
+                    if stream_sid.startswith("web_sim_"):
+                        is_exotel_stream = False
+                        ws_logger.info(f"[BROWSER SIM] Detected web simulator stream, sid={stream_sid}")
+                    elif data.get("stream_sid"):
                         is_exotel_stream = True
                     ws_logger.info(f"Stream started: sid={stream_sid}, exotel={is_exotel_stream}")
                     twilio_websockets[stream_sid] = websocket
                     monitor_connections[stream_sid] = set()
                     whisper_queues[stream_sid] = []
                     takeover_active[stream_sid] = False
+                    _tts_recording_buffers[stream_sid] = []
 
                     if not greeting_sent:
                         greeting_sent = True
                         ws_logger.info(f"GREETING: Triggering TTS greeting for stream {stream_sid}")
                         active_tts_tasks[stream_sid] = asyncio.create_task(
                             synthesize_and_send_audio(
-                                f"Namaste {lead_name} Ji, Kaise hai aap? Mai Adsgpt se bol ra hu, kya 2 min baat ho sakti hai, apne hamare site pe ek form fill up kiya tha",
+                                f"हैलो {lead_name} जी? मैं AdsGPT से बात कर रहा हूँ, आपने हमारे AI platform के regarding enquiry की थी?",
                                 stream_sid,
                                 websocket,
+                                _tts_provider_override,
+                                _tts_voice_override,
+                                _tts_language_override,
                             )
                         )
                 elif data.get("event") == "media":
-                    dg_connection.send(
-                        base64.b64decode(data["media"]["payload"])
-                    )
+                    raw_audio = base64.b64decode(data["media"]["payload"])
+                    dg_connection.send(raw_audio)
                 elif data.get("event") == "stop":
                     print("Media stream stopped.")
                     break
@@ -1222,13 +1431,17 @@ async def handle_media_stream(websocket: WebSocket):
                         whisper_queues[stream_sid] = []
                         takeover_active[stream_sid] = False
                         ws_logger.info(f"Exotel text stream started, sid={stream_sid}")
+                    _tts_recording_buffers.setdefault(stream_sid, [])
                     if not greeting_sent:
                         greeting_sent = True
                         active_tts_tasks[stream_sid] = asyncio.create_task(
                             synthesize_and_send_audio(
-                                f"Hi {lead_name}, I saw you requested info about {interest}. How can I help?",
+                                f"हैलो {lead_name} जी? मैं AdsGPT से बात कर रहा हूँ, आपने हमारे AI platform के regarding enquiry की थी?",
                                 stream_sid,
                                 websocket,
+                                _tts_provider_override,
+                                _tts_voice_override,
+                                _tts_language_override,
                             )
                         )
     except Exception as e:
@@ -1237,6 +1450,8 @@ async def handle_media_stream(websocket: WebSocket):
         if stream_sid:
             call_logger.call_event(stream_sid, "WS_ERROR", str(e))
     finally:
+        import logging as _flog
+        _flog.getLogger("uvicorn.error").info(f"[WS CLOSED] sid={stream_sid}, turns={len(chat_history)}, exotel={is_exotel_stream}")
         if stream_sid:
             call_logger.call_event(stream_sid, "WS_DISCONNECTED", f"turns={len(chat_history)}")
             call_logger.end_call(stream_sid)
@@ -1257,7 +1472,7 @@ async def handle_media_stream(websocket: WebSocket):
                         if text:
                             transcript_turns.append({"role": role, "text": text})
                     
-                    # Fetch recording URL from Exotel
+                    # Fetch/save recording URL
                     recording_url = None
                     if _exotel_call_sid:
                         try:
@@ -1277,6 +1492,71 @@ async def handle_media_stream(websocket: WebSocket):
                         except Exception as _re:
                             import logging as _rlog2
                             _rlog2.getLogger("uvicorn.error").error(f"[RECORDING] Error fetching: {_re}")
+
+                    # Save local WAV recording from TTS chunks (browser sim or fallback)
+                    _rec_chunks = _tts_recording_buffers.get(stream_sid, [])
+                    if not recording_url and (_rec_chunks or _recording_mic_chunks):
+                        try:
+                            import wave as _wave
+                            import time as _t2
+                            _rec_dir = os.path.join(os.path.dirname(__file__), "recordings")
+                            os.makedirs(_rec_dir, exist_ok=True)
+                            _wav_name = f"call_{_call_lead_id}_{int(_call_start_time)}.wav"
+                            _wav_path = os.path.join(_rec_dir, _wav_name)
+                            
+                            # Time-aligned recording at 8kHz 16-bit mono
+                            RATE = 8000
+                            SAMPLE_BYTES = 2  # 16-bit
+                            
+                            # Calculate total duration from timestamps
+                            all_ts = [ts for ts, _ in _recording_mic_chunks] + [ts for ts, _ in _rec_chunks]
+                            if not all_ts:
+                                raise ValueError("No audio data")
+                            t_start = min(all_ts)
+                            t_end = max(all_ts) + 0.5  # add 0.5s buffer
+                            total_samples = int((t_end - t_start) * RATE)
+                            
+                            # Create two buffers: mic and tts
+                            import array as _arr
+                            mic_buf = _arr.array('h', [0] * total_samples)
+                            tts_buf = _arr.array('h', [0] * total_samples)
+                            
+                            # Place mic chunks at correct positions
+                            for ts, chunk_bytes in _recording_mic_chunks:
+                                offset = int((ts - t_start) * RATE)
+                                n_samples = len(chunk_bytes) // SAMPLE_BYTES
+                                for j in range(min(n_samples, total_samples - offset)):
+                                    idx = offset + j
+                                    if 0 <= idx < total_samples:
+                                        val = int.from_bytes(chunk_bytes[j*2:j*2+2], 'little', signed=True)
+                                        mic_buf[idx] = max(-32768, min(32767, mic_buf[idx] + val))
+                            
+                            # Place TTS chunks at correct positions
+                            for ts, chunk_bytes in _rec_chunks:
+                                offset = int((ts - t_start) * RATE)
+                                n_samples = len(chunk_bytes) // SAMPLE_BYTES
+                                for j in range(min(n_samples, total_samples - offset)):
+                                    idx = offset + j
+                                    if 0 <= idx < total_samples:
+                                        val = int.from_bytes(chunk_bytes[j*2:j*2+2], 'little', signed=True)
+                                        tts_buf[idx] = max(-32768, min(32767, tts_buf[idx] + val))
+                            
+                            # Mix both buffers
+                            mixed = _arr.array('h', [0] * total_samples)
+                            for i in range(total_samples):
+                                mixed[i] = max(-32768, min(32767, mic_buf[i] + tts_buf[i]))
+                            
+                            with _wave.open(_wav_path, "wb") as wf:
+                                wf.setnchannels(1)
+                                wf.setsampwidth(2)
+                                wf.setframerate(RATE)
+                                wf.writeframes(mixed.tobytes())
+                            recording_url = f"/api/recordings/{_wav_name}"
+                            import logging as _wavlog
+                            _wavlog.getLogger("uvicorn.error").info(f"[RECORDING] Saved local WAV: {_wav_path}")
+                        except Exception as _we:
+                            import logging as _wavlog2
+                            _wavlog2.getLogger("uvicorn.error").error(f"[RECORDING] WAV save error: {_we}")
                     
                     call_duration = round(_t.time() - _call_start_time, 1)
                     if transcript_turns:
@@ -1288,7 +1568,11 @@ async def handle_media_stream(websocket: WebSocket):
                         )
                 except Exception as _te:
                     import logging as _tlog
-                    _tlog.getLogger("uvicorn.error").error(f"[TRANSCRIPT] Error saving: {_te}")
+                    import traceback
+                    _tlog.getLogger("uvicorn.error").error(f"[TRANSCRIPT] Error saving: {_te}\n{traceback.format_exc()}")
+        # Cleanup recording buffer
+        if stream_sid and stream_sid in _tts_recording_buffers:
+            del _tts_recording_buffers[stream_sid]
         if stream_sid and stream_sid in twilio_websockets:
             del twilio_websockets[stream_sid]
         try:
@@ -1314,9 +1598,8 @@ async def handle_media_stream(websocket: WebSocket):
                 text = res.text.replace("```json", "").replace("```", "").strip()
                 outcome = json.loads(text)
                 
-                if lead_phone and outcome.get("requires_brochure"):
-                    send_whatsapp_message(lead_phone, f"Hi {lead_name}, thanks for taking the time to speak just now. Here is the highly detailed property brochure you requested as discussed: https://globussoft.ai/bdrpl/luxury_brochure.pdf\n\nLet me know if you have any questions!\n\n- Globussoft AI Reception")
                 
+
                 if lead_phone:
                     from database import update_call_note
                     update_call_note("ws_" + str(stream_sid), outcome.get("note", "Call completed via Dialer."), lead_phone)
@@ -1423,6 +1706,35 @@ async def handle_exotel_recording(request: Request, background_tasks: Background
         background_tasks.add_task(process_recording, recording_url, call_sid, to_phone)
     
     return {"status": "success"}
+
+@app.post("/webhook/twilio/status")
+async def twilio_status_webhook(request: Request):
+    form = await request.form()
+    status = form.get("CallStatus", "")
+    phone = form.get("To", "")
+    if status.lower() in ['failed', 'busy', 'no-answer', 'canceled']:
+        from database import log_call_status
+        log_call_status(phone, status, "Twilio Call Error")
+    return {"status": "ok"}
+
+@app.post("/webhook/exotel/status")
+async def exotel_status_webhook(request: Request):
+    form = await request.form()
+    status = form.get("Status", form.get("CallStatus", ""))
+    detailed_status = form.get("DetailedStatus", "")
+    phone = form.get("To", "")
+    
+    terminal_error = None
+    if detailed_status.lower() in ['busy', 'no-answer', 'failed', 'canceled', 'dnd']:
+        terminal_error = detailed_status
+    elif status.lower() in ['failed', 'busy', 'no-answer', 'canceled']:
+        terminal_error = status
+        
+    if terminal_error:
+        from database import log_call_status
+        log_call_status(phone, terminal_error, "Exotel Call Error")
+        
+    return {"status": "ok"}
 
 async def process_recording(recording_url: str, call_sid: str, phone: str):
     print(f"Downloading recording for {call_sid}...")
@@ -1599,6 +1911,23 @@ def mobile_complete_task(task_id: int, current_user: dict = Depends(get_current_
     return {"status": "success"}
 
 app.include_router(mobile_api)
+
+# --- RECORDINGS SERVE ---
+@app.get("/api/recordings/{filename}")
+async def serve_recording(filename: str):
+    """Serve WAV/WebM recording files for call playback."""
+    import re
+    # Sanitize filename to prevent directory traversal
+    if not re.match(r'^call_\d+_\d+\.(wav|webm)$', filename):
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=404, content={"error": "Not found"})
+    rec_dir = os.path.join(os.path.dirname(__file__), "recordings")
+    file_path = os.path.join(rec_dir, filename)
+    if not os.path.isfile(file_path):
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=404, content={"error": "Recording not found"})
+    media_type = "audio/webm" if filename.endswith(".webm") else "audio/wav"
+    return FileResponse(file_path, media_type=media_type, filename=filename)
 
 # --- STATIC FILE SERVING (SPA) ---
 _dist_dir = os.path.join(os.path.dirname(__file__), "frontend", "dist")
