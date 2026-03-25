@@ -9,6 +9,15 @@ const API_URL = "/api";
 export default function App() {
   // Auth State
   const [authToken, setAuthToken] = useState(localStorage.getItem('authToken') || null);
+  const apiFetch = async (url, options = {}) => {
+    return fetch(url, {
+      ...options,
+      headers: {
+        ...options.headers,
+        'Authorization': `Bearer ${authToken}`
+      }
+    });
+  };
   const [currentUser, setCurrentUser] = useState(null);
   const [authPage, setAuthPage] = useState('login'); // 'login' or 'signup'
   const [authError, setAuthError] = useState('');
@@ -119,7 +128,7 @@ export default function App() {
   const [intFormData, setIntFormData] = useState({ provider: 'HubSpot', credentials: {} });
 
   // RBAC Global State
-  const [userRole, setUserRole] = useState('Admin'); // 'Admin' or 'Agent'
+  const userRole = currentUser?.role || 'Agent';
 
   // GenAI Email Modal State
   const [emailDraft, setEmailDraft] = useState(null);
@@ -142,7 +151,7 @@ export default function App() {
 
   const fetchLeads = async () => {
     try {
-      const res = await fetch(`${API_URL}/leads`);
+      const res = await apiFetch(`${API_URL}/leads`);
       const data = await res.json();
       setLeads(data);
     } catch (e) {
@@ -152,7 +161,7 @@ export default function App() {
 
   const fetchSites = async () => {
     try {
-      const res = await fetch(`${API_URL}/sites`);
+      const res = await apiFetch(`${API_URL}/sites`);
       setSites(await res.json());
     } catch (e) {
       console.error("Could not fetch sites:", e);
@@ -160,35 +169,35 @@ export default function App() {
   };
 
   const fetchTasks = async () => {
-    try { const res = await fetch(`${API_URL}/tasks`); setTasks(await res.json()); } catch(e){}
+    try { const res = await apiFetch(`${API_URL}/tasks`); setTasks(await res.json()); } catch(e){}
   };
 
   const fetchReports = async () => {
-    try { const res = await fetch(`${API_URL}/reports`); setReports(await res.json()); } catch(e){}
+    try { const res = await apiFetch(`${API_URL}/reports`); setReports(await res.json()); } catch(e){}
   };
 
   const fetchWhatsappLogs = async () => {
-    try { const res = await fetch(`${API_URL}/whatsapp`); setWhatsappLogs(await res.json()); } catch(e){}
+    try { const res = await apiFetch(`${API_URL}/whatsapp`); setWhatsappLogs(await res.json()); } catch(e){}
   };
 
   const fetchAnalytics = async () => {
-    try { const res = await fetch(`${API_URL}/analytics`); setAnalyticsData(await res.json()); } catch(e){}
+    try { const res = await apiFetch(`${API_URL}/analytics`); setAnalyticsData(await res.json()); } catch(e){}
   };
 
   const fetchIntegrations = async () => {
-    try { const res = await fetch(`${API_URL}/integrations`); setIntegrations(await res.json()); } catch(e){}
+    try { const res = await apiFetch(`${API_URL}/integrations`); setIntegrations(await res.json()); } catch(e){}
   };
 
   const fetchPronunciations = async () => {
-    try { const res = await fetch(`${API_URL}/pronunciation`); setPronunciations(await res.json()); } catch(e){}
+    try { const res = await apiFetch(`${API_URL}/pronunciation`); setPronunciations(await res.json()); } catch(e){}
   };
 
   const fetchOrgs = async () => {
-    try { const res = await fetch(`${API_URL}/organizations`); setOrgs(await res.json()); } catch(e){}
+    try { const res = await apiFetch(`${API_URL}/organizations`); setOrgs(await res.json()); } catch(e){}
   };
 
   const fetchOrgProducts = async (orgId) => {
-    try { const res = await fetch(`${API_URL}/organizations/${orgId}/products`); setOrgProducts(await res.json()); } catch(e){}
+    try { const res = await apiFetch(`${API_URL}/organizations/${orgId}/products`); setOrgProducts(await res.json()); } catch(e){}
   };
 
   useEffect(() => {
@@ -205,7 +214,7 @@ export default function App() {
 
   const handleStatusChange = async (leadId, newStatus) => {
     try {
-      await fetch(`${API_URL}/leads/${leadId}/status`, {
+      await apiFetch(`${API_URL}/leads/${leadId}/status`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: newStatus })
@@ -219,7 +228,7 @@ export default function App() {
 
   const handleCompleteTask = async (taskId) => {
     try {
-      await fetch(`${API_URL}/tasks/${taskId}/complete`, { method: 'PUT' });
+      await apiFetch(`${API_URL}/tasks/${taskId}/complete`, { method: 'PUT' });
       fetchTasks();
       fetchReports();
     } catch (e) { console.error(e); }
@@ -229,7 +238,7 @@ export default function App() {
     e.preventDefault();
     setLoading(true);
     try {
-      await fetch(`${API_URL}/leads`, {
+      await apiFetch(`${API_URL}/leads`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(formData)
@@ -246,7 +255,7 @@ export default function App() {
   const handleDial = async (lead) => {
     setDialingId(lead.id);
     try {
-      const res = await fetch(`${API_URL}/dial/${lead.id}`, { method: "POST" });
+      const res = await apiFetch(`${API_URL}/dial/${lead.id}`, { method: "POST" });
       const data = await res.json();
       alert(`Status: ${data.message || 'Connecting call...'}`);
     } catch(e) {
@@ -258,7 +267,7 @@ export default function App() {
   const handleOpenDocs = async (lead) => {
     setActiveLeadDocs(lead);
     try {
-      const res = await fetch(`${API_URL}/leads/${lead.id}/documents`);
+      const res = await apiFetch(`${API_URL}/leads/${lead.id}/documents`);
       setDocs(await res.json());
     } catch(e) {}
   };
@@ -266,12 +275,12 @@ export default function App() {
   const handleUploadDoc = async (e) => {
     e.preventDefault();
     try {
-      await fetch(`${API_URL}/leads/${activeLeadDocs.id}/documents`, {
+      await apiFetch(`${API_URL}/leads/${activeLeadDocs.id}/documents`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify(docFormData)
       });
       setDocFormData({ file_name: '', file_url: '' });
-      const res = await fetch(`${API_URL}/leads/${activeLeadDocs.id}/documents`);
+      const res = await apiFetch(`${API_URL}/leads/${activeLeadDocs.id}/documents`);
       setDocs(await res.json());
     } catch(e) { console.error(e); }
   };
@@ -290,7 +299,7 @@ export default function App() {
     }
     navigator.geolocation.getCurrentPosition(async (position) => {
       try {
-        const response = await fetch(`${API_URL}/punch`, {
+        const response = await apiFetch(`${API_URL}/punch`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -319,7 +328,7 @@ export default function App() {
     setSearchQuery(query);
     if (query.trim().length >= 2) {
       try {
-        const res = await fetch(`${API_URL}/leads/search?q=${encodeURIComponent(query)}`);
+        const res = await apiFetch(`${API_URL}/leads/search?q=${encodeURIComponent(query)}`);
         setLeads(await res.json());
       } catch(e) {}
     } else if (query.trim().length === 0) {
@@ -332,7 +341,7 @@ export default function App() {
     const newNote = prompt(`Update the manual timeline note for ${lead.first_name} ${lead.last_name}:`, rawNote);
     if (newNote !== null) {
       try {
-        await fetch(`${API_URL}/leads/${lead.id}/notes`, {
+        await apiFetch(`${API_URL}/leads/${lead.id}/notes`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ note: newNote })
@@ -347,7 +356,7 @@ export default function App() {
   const handleDraftEmail = async (lead) => {
     setDialingId(lead.id); // Reuse the dialing spinner temporarily
     try {
-      const res = await fetch(`${API_URL}/leads/${lead.id}/draft-email`);
+      const res = await apiFetch(`${API_URL}/leads/${lead.id}/draft-email`);
       const data = await res.json();
       setEmailDraft(data);
     } catch(e) {
@@ -371,7 +380,7 @@ export default function App() {
     e.preventDefault();
     setLoading(true);
     try {
-      await fetch(`${API_URL}/leads/${editingLead.id}`, {
+      await apiFetch(`${API_URL}/leads/${editingLead.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(editFormData)
@@ -388,7 +397,7 @@ export default function App() {
   const handleDeleteLead = async (lead) => {
     if (!window.confirm(`Are you sure you want to delete ${lead.first_name} ${lead.last_name}?`)) return;
     try {
-      await fetch(`${API_URL}/leads/${lead.id}`, { method: 'DELETE' });
+      await apiFetch(`${API_URL}/leads/${lead.id}`, { method: 'DELETE' });
       fetchLeads();
     } catch (e) {
       console.error('Error deleting lead', e);
@@ -399,7 +408,7 @@ export default function App() {
     e.preventDefault();
     setLoading(true);
     try {
-      await fetch(`${API_URL}/integrations`, {
+      await apiFetch(`${API_URL}/integrations`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -421,7 +430,7 @@ export default function App() {
     e.preventDefault();
     if (!pronFormData.word.trim() || !pronFormData.phonetic.trim()) return;
     try {
-      await fetch(`${API_URL}/pronunciation`, {
+      await apiFetch(`${API_URL}/pronunciation`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(pronFormData)
@@ -433,7 +442,7 @@ export default function App() {
 
   const handleDeletePronunciation = async (id) => {
     try {
-      await fetch(`${API_URL}/pronunciation/${id}`, { method: 'DELETE' });
+      await apiFetch(`${API_URL}/pronunciation/${id}`, { method: 'DELETE' });
       fetchPronunciations();
     } catch(e) { console.error(e); }
   };
@@ -441,7 +450,7 @@ export default function App() {
   const handleViewTranscripts = async (lead) => {
     setTranscriptLead(lead);
     try {
-      const res = await fetch(`${API_URL}/leads/${lead.id}/transcripts`);
+      const res = await apiFetch(`${API_URL}/leads/${lead.id}/transcripts`);
       setTranscripts(await res.json());
     } catch(e) { setTranscripts([]); }
   };
@@ -449,13 +458,13 @@ export default function App() {
   const handleCreateOrg = async () => {
     const name = prompt('Organization name:');
     if (!name) return;
-    await fetch(`${API_URL}/organizations`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ name }) });
+    await apiFetch(`${API_URL}/organizations`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ name }) });
     fetchOrgs();
   };
 
   const handleDeleteOrg = async (orgId) => {
     if (!confirm('Delete this organization and all its products?')) return;
-    await fetch(`${API_URL}/organizations/${orgId}`, { method: 'DELETE' });
+    await apiFetch(`${API_URL}/organizations/${orgId}`, { method: 'DELETE' });
     if (selectedOrg?.id === orgId) { setSelectedOrg(null); setOrgProducts([]); }
     fetchOrgs();
   };
@@ -469,7 +478,7 @@ export default function App() {
     if (!selectedOrg) return;
     const name = prompt('Product name:');
     if (!name) return;
-    await fetch(`${API_URL}/organizations/${selectedOrg.id}/products`, {
+    await apiFetch(`${API_URL}/organizations/${selectedOrg.id}/products`, {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ name })
     });
@@ -479,7 +488,7 @@ export default function App() {
   const handleScrapeProduct = async (productId) => {
     setScraping(productId);
     try {
-      const res = await fetch(`${API_URL}/products/${productId}/scrape`, { method: 'POST' });
+      const res = await apiFetch(`${API_URL}/products/${productId}/scrape`, { method: 'POST' });
       const data = await res.json();
       if (data.scraped_info) fetchOrgProducts(selectedOrg.id);
     } catch(e) { console.error(e); }
@@ -487,7 +496,7 @@ export default function App() {
   };
 
   const handleSaveProduct = async (productId, updates) => {
-    await fetch(`${API_URL}/products/${productId}`, {
+    await apiFetch(`${API_URL}/products/${productId}`, {
       method: 'PUT', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify(updates)
     });
@@ -496,7 +505,7 @@ export default function App() {
 
   const handleDeleteProduct = async (productId) => {
     if (!confirm('Delete this product?')) return;
-    await fetch(`${API_URL}/products/${productId}`, { method: 'DELETE' });
+    await apiFetch(`${API_URL}/products/${productId}`, { method: 'DELETE' });
     fetchOrgProducts(selectedOrg.id);
   };
 

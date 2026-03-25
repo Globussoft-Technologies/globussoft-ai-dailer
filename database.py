@@ -25,6 +25,7 @@ def init_db():
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS leads (
             id INT AUTO_INCREMENT PRIMARY KEY,
+            org_id INT,
             first_name VARCHAR(255) NOT NULL,
             last_name VARCHAR(255),
             phone VARCHAR(50) NOT NULL UNIQUE,
@@ -33,7 +34,8 @@ def init_db():
             follow_up_note TEXT,
             external_id VARCHAR(255),
             crm_provider VARCHAR(255),
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (org_id) REFERENCES organizations (id) ON DELETE SET NULL
         )
     ''')
     
@@ -53,9 +55,11 @@ def init_db():
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS sites (
             id INT AUTO_INCREMENT PRIMARY KEY,
+            org_id INT,
             name VARCHAR(255) NOT NULL,
             lat DOUBLE NOT NULL,
-            lon DOUBLE NOT NULL
+            lon DOUBLE NOT NULL,
+            FOREIGN KEY (org_id) REFERENCES organizations (id) ON DELETE SET NULL
         )
     ''')
     
@@ -109,10 +113,12 @@ def init_db():
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS crm_integrations (
             id INT AUTO_INCREMENT PRIMARY KEY,
-            provider VARCHAR(255) NOT NULL UNIQUE,
+            org_id INT,
+            provider VARCHAR(255) NOT NULL,
             credentials TEXT NOT NULL,
             is_active BOOLEAN DEFAULT TRUE,
-            last_synced_at VARCHAR(100)
+            last_synced_at VARCHAR(100),
+            FOREIGN KEY (org_id) REFERENCES organizations (id) ON DELETE CASCADE
         )
     ''')
 
@@ -193,23 +199,23 @@ def init_db():
     
     conn.close()
 
-def get_all_leads() -> List[Dict]:
+def get_all_leads(org_id: int) -> List[Dict]:
     conn = get_conn()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM leads ORDER BY id DESC")
+    cursor.execute("SELECT * FROM leads WHERE org_id = %s ORDER BY id DESC", (org_id,))
     rows = cursor.fetchall()
     conn.close()
     return rows
 
-def search_leads(query: str) -> List[Dict]:
+def search_leads(query: str, org_id: int) -> List[Dict]:
     conn = get_conn()
     cursor = conn.cursor()
     search_term = f"%{query}%"
     cursor.execute('''
         SELECT * FROM leads 
-        WHERE first_name LIKE %s OR last_name LIKE %s OR phone LIKE %s
+        WHERE org_id = %s AND (first_name LIKE %s OR last_name LIKE %s OR phone LIKE %s)
         ORDER BY id DESC
-    ''', (search_term, search_term, search_term))
+    ''', (org_id, search_term, search_term, search_term))
     rows = cursor.fetchall()
     conn.close()
     return rows
@@ -222,45 +228,47 @@ def get_lead_by_id(lead_id: int) -> Dict:
     conn.close()
     return row
 
-def create_lead(data: dict):
+def create_lead(data: dict, org_id: Optional[int] = None):
     conn = get_conn()
     cursor = conn.cursor()
     cursor.execute('''
-        INSERT INTO leads (first_name, last_name, phone, source, external_id, crm_provider)
-        VALUES (%s, %s, %s, %s, %s, %s)
+        INSERT INTO leads (first_name, last_name, phone, source, external_id, crm_provider, org_id)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
     ''', (
         data.get('first_name'), 
         data.get('last_name', ''), 
         data.get('phone'), 
         data.get('source', 'Dashboard'),
         data.get('external_id'),
-        data.get('crm_provider')
+        data.get('crm_provider'),
+        org_id
     ))
     last_id = cursor.lastrowid
     conn.close()
     return last_id
 
-def update_lead(lead_id: int, data: dict):
+def update_lead(lead_id: int, data: dict, org_id: int):
     conn = get_conn()
     cursor = conn.cursor()
     cursor.execute('''
         UPDATE leads SET first_name = %s, last_name = %s, phone = %s, source = %s
-        WHERE id = %s
+        WHERE id = %s AND org_id = %s
     ''', (
         data.get('first_name'),
         data.get('last_name', ''),
         data.get('phone'),
         data.get('source', 'Dashboard'),
-        lead_id
+        lead_id,
+        org_id
     ))
     affected = cursor.rowcount
     conn.close()
     return affected > 0
 
-def delete_lead(lead_id: int):
+def delete_lead(lead_id: int, org_id: int):
     conn = get_conn()
     cursor = conn.cursor()
-    cursor.execute("DELETE FROM leads WHERE id = %s", (lead_id,))
+    cursor.execute("DELETE FROM leads WHERE id = %s AND org_id = %s", (lead_id, org_id))
     affected = cursor.rowcount
     conn.close()
     return affected > 0
@@ -277,10 +285,10 @@ def update_call_note(call_sid: str, note: str, phone: str = ""):
         cursor.execute("UPDATE leads SET status = 'Summarized', follow_up_note = %s WHERE phone LIKE %s", (note, f"%{phone_str}%"))
     conn.close()
 
-def get_all_sites() -> List[Dict]:
+def get_all_sites(org_id: int) -> List[Dict]:
     conn = get_conn()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM sites ORDER BY name")
+    cursor.execute("SELECT * FROM sites WHERE org_id = %s ORDER BY name", (org_id,))
     rows = cursor.fetchall()
     conn.close()
     return rows
@@ -295,10 +303,10 @@ def create_punch(agent_name: str, site_id: int, lat: float, lon: float, status: 
     conn.close()
     return True
 
-def get_site_by_id(site_id: int) -> Dict:
+def get_site_by_id(site_id: int, org_id: int) -> Dict:
     conn = get_conn()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM sites WHERE id = %s", (site_id,))
+    cursor.execute("SELECT * FROM sites WHERE id = %s AND org_id = %s", (site_id, org_id))
     row = cursor.fetchone()
     conn.close()
     return row
@@ -350,10 +358,10 @@ def update_lead_status(lead_id: int, status: str):
     conn.close()
     return True
 
-def get_all_tasks() -> List[Dict]:
+def get_all_tasks(org_id: int) -> List[Dict]:
     conn = get_conn()
     cursor = conn.cursor()
-    cursor.execute("SELECT t.*, l.first_name, l.last_name FROM tasks t JOIN leads l ON t.lead_id = l.id ORDER BY t.status DESC, t.id DESC")
+    cursor.execute("SELECT t.*, l.first_name, l.last_name FROM tasks t JOIN leads l ON t.lead_id = l.id WHERE l.org_id = %s ORDER BY t.status DESC, t.id DESC", (org_id,))
     rows = cursor.fetchall()
     conn.close()
     return rows
@@ -365,16 +373,16 @@ def complete_task(task_id: int):
     conn.close()
     return True
 
-def get_reports() -> Dict:
+def get_reports(org_id: int) -> Dict:
     conn = get_conn()
     cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*) as cnt FROM leads")
+    cursor.execute("SELECT COUNT(*) as cnt FROM leads WHERE org_id = %s", (org_id,))
     total_leads = cursor.fetchone()['cnt']
-    cursor.execute("SELECT COUNT(*) as cnt FROM leads WHERE status = 'Closed'")
+    cursor.execute("SELECT COUNT(*) as cnt FROM leads WHERE status = 'Closed' AND org_id = %s", (org_id,))
     closed_deals = cursor.fetchone()['cnt']
-    cursor.execute("SELECT COUNT(*) as cnt FROM punches WHERE status = 'Valid'")
+    cursor.execute("SELECT COUNT(*) as cnt FROM punches p JOIN sites s ON p.site_id = s.id WHERE p.status = 'Valid' AND s.org_id = %s", (org_id,))
     total_punches = cursor.fetchone()['cnt']
-    cursor.execute("SELECT COUNT(*) as cnt FROM tasks WHERE status = 'Pending'")
+    cursor.execute("SELECT COUNT(*) as cnt FROM tasks t JOIN leads l ON t.lead_id = l.id WHERE t.status = 'Pending' AND l.org_id = %s", (org_id,))
     pending_tasks = cursor.fetchone()['cnt']
     conn.close()
     return {
@@ -384,15 +392,16 @@ def get_reports() -> Dict:
         "pending_internal_tasks": pending_tasks
     }
 
-def get_all_whatsapp_logs() -> List[Dict]:
+def get_all_whatsapp_logs(org_id: int) -> List[Dict]:
     conn = get_conn()
     cursor = conn.cursor()
     cursor.execute('''
         SELECT w.*, l.first_name, l.last_name, l.phone 
         FROM whatsapp_logs w 
         JOIN leads l ON w.lead_id = l.id 
+        WHERE l.org_id = %s
         ORDER BY w.sent_at DESC
-    ''')
+    ''', (org_id,))
     rows = cursor.fetchall()
     conn.close()
     return rows
@@ -457,10 +466,10 @@ def get_analytics() -> List[Dict]:
 
 # --- CRM INTEGRATIONS ---
 
-def get_all_crm_integrations() -> List[Dict]:
+def get_all_crm_integrations(org_id: int) -> List[Dict]:
     conn = get_conn()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM crm_integrations")
+    cursor.execute("SELECT * FROM crm_integrations WHERE org_id = %s", (org_id,))
     rows = cursor.fetchall()
     conn.close()
     integrations = []
@@ -478,10 +487,13 @@ def get_all_crm_integrations() -> List[Dict]:
         })
     return integrations
 
-def get_active_crm_integrations() -> List[Dict]:
+def get_active_crm_integrations(org_id: int = None) -> List[Dict]:
     conn = get_conn()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM crm_integrations WHERE is_active = 1")
+    if org_id:
+        cursor.execute("SELECT * FROM crm_integrations WHERE is_active = 1 AND org_id = %s", (org_id,))
+    else:
+        cursor.execute("SELECT * FROM crm_integrations WHERE is_active = 1")
     rows = cursor.fetchall()
     conn.close()
     integrations = []
@@ -499,18 +511,18 @@ def get_active_crm_integrations() -> List[Dict]:
         })
     return integrations
 
-def save_crm_integration(provider: str, credentials: dict):
+def save_crm_integration(provider: str, credentials: dict, org_id: int):
     conn = get_conn()
     cursor = conn.cursor()
     val = json.dumps(credentials)
-    cursor.execute("SELECT id FROM crm_integrations WHERE provider = %s", (provider,))
+    cursor.execute("SELECT id FROM crm_integrations WHERE provider = %s AND org_id = %s", (provider, org_id))
     existing = cursor.fetchone()
     if existing:
-        cursor.execute("UPDATE crm_integrations SET credentials = %s, is_active = 1 WHERE provider = %s", 
-                    (val, provider))
+        cursor.execute("UPDATE crm_integrations SET credentials = %s, is_active = 1 WHERE provider = %s AND org_id = %s", 
+                    (val, provider, org_id))
     else:
-        cursor.execute("INSERT INTO crm_integrations (provider, credentials) VALUES (%s, %s)", 
-                    (provider, val))
+        cursor.execute("INSERT INTO crm_integrations (org_id, provider, credentials) VALUES (%s, %s, %s)", 
+                    (org_id, provider, val))
     conn.close()
     return True
 

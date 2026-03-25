@@ -175,12 +175,12 @@ def haversine_distance(lat1, lon1, lat2, lon2):
     return R * c
 
 @app.get("/api/leads")
-def api_get_leads():
-    return get_all_leads()
+def api_get_leads(current_user: dict = Depends(get_current_user)):
+    return get_all_leads(current_user.get("org_id"))
 
 @app.get("/api/leads/export")
-def api_export_leads():
-    leads = get_all_leads()
+def api_export_leads(current_user: dict = Depends(get_current_user)):
+    leads = get_all_leads(current_user.get("org_id"))
     stream = io.StringIO()
     writer = csv.writer(stream)
     
@@ -208,23 +208,23 @@ def api_export_leads():
     return response
 
 @app.get("/api/leads/search")
-def api_search_leads(q: str = ""):
+def api_search_leads(q: str = "", current_user: dict = Depends(get_current_user)):
     if not q:
-        return get_all_leads()
-    return search_leads(q)
+        return get_all_leads(current_user.get("org_id"))
+    return search_leads(q, current_user.get("org_id"))
 
 @app.post("/api/leads")
-def api_create_lead(lead: LeadCreate):
+def api_create_lead(lead: LeadCreate, current_user: dict = Depends(get_current_user)):
     try:
-        lead_id = create_lead(lead.dict())
+        lead_id = create_lead(lead.dict(), current_user.get("org_id"))
         return {"status": "success", "id": lead_id}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
 @app.put("/api/leads/{lead_id}")
-def api_update_lead(lead_id: int, lead: LeadCreate):
+def api_update_lead(lead_id: int, lead: LeadCreate, current_user: dict = Depends(get_current_user)):
     try:
-        success = update_lead(lead_id, lead.dict())
+        success = update_lead(lead_id, lead.dict(), current_user.get("org_id"))
         if success:
             return {"status": "success", "message": f"Lead {lead_id} updated"}
         return {"status": "error", "message": "Lead not found"}
@@ -232,9 +232,9 @@ def api_update_lead(lead_id: int, lead: LeadCreate):
         return {"status": "error", "message": str(e)}
 
 @app.delete("/api/leads/{lead_id}")
-def api_delete_lead(lead_id: int):
+def api_delete_lead(lead_id: int, current_user: dict = Depends(get_current_user)):
     try:
-        success = delete_lead(lead_id)
+        success = delete_lead(lead_id, current_user.get("org_id"))
         if success:
             return {"status": "success", "message": f"Lead {lead_id} deleted"}
         return {"status": "error", "message": "Lead not found"}
@@ -257,8 +257,8 @@ async def api_dial_lead(lead_id: int, background_tasks: BackgroundTasks):
     return {"status": "success", "message": f"Dialing {lead['first_name']}..."}
 
 @app.get("/api/sites")
-def api_get_sites():
-    return get_all_sites()
+def api_get_sites(current_user: dict = Depends(get_current_user)):
+    return get_all_sites(current_user.get("org_id"))
 
 @app.post("/api/punch")
 def api_punch(punch: PunchCreate):
@@ -326,8 +326,8 @@ def api_draft_email(lead_id: int):
         }
 
 @app.get("/api/tasks")
-def api_get_tasks():
-    return get_all_tasks()
+def api_get_tasks(current_user: dict = Depends(get_current_user)):
+    return get_all_tasks(current_user.get("org_id"))
 
 @app.put("/api/tasks/{task_id}/complete")
 def api_complete_task(task_id: int):
@@ -335,12 +335,12 @@ def api_complete_task(task_id: int):
     return {"status": "success"}
 
 @app.get("/api/reports")
-def api_get_reports():
-    return get_reports()
+def api_get_reports(current_user: dict = Depends(get_current_user)):
+    return get_reports(current_user.get("org_id"))
 
 @app.get("/api/whatsapp")
-def api_get_whatsapp():
-    return get_all_whatsapp_logs()
+def api_get_whatsapp(current_user: dict = Depends(get_current_user)):
+    return get_all_whatsapp_logs(current_user.get("org_id"))
 
 @app.post("/api/leads/{lead_id}/documents")
 def api_upload_document(lead_id: int, payload: DocumentCreate):
@@ -467,8 +467,8 @@ def api_get_analytics():
     return get_analytics()
 
 @app.get("/api/integrations")
-def api_get_integrations():
-    active = get_active_crm_integrations()
+def api_get_integrations(current_user: dict = Depends(get_current_user)):
+    active = get_active_crm_integrations(current_user.get("org_id"))
     # Mask API keys for frontend security
     for a in active:
         if a["api_key"] and len(a["api_key"]) > 8:
@@ -480,7 +480,7 @@ def api_get_integrations():
 from database import save_crm_integration
 
 @app.post("/api/integrations")
-async def create_integration(data: dict):
+async def create_integration(data: dict, current_user: dict = Depends(get_current_user)):
     provider = data.get("provider")
     credentials = data.get("credentials")
     
@@ -490,7 +490,7 @@ async def create_integration(data: dict):
     try:
         # Save integration safely
         from database import save_crm_integration
-        save_crm_integration(provider, credentials)
+        save_crm_integration(provider, credentials, current_user.get("org_id"))
         return {"status": "success"}
     except Exception as e:
         print(f"Error saving integration: {e}")
@@ -1523,12 +1523,12 @@ mobile_api = APIRouter(prefix="/api/mobile", tags=["Mobile Routes"])
 
 @mobile_api.get("/leads")
 def mobile_get_leads(current_user: dict = Depends(get_current_user)):
-    return get_all_leads()
+    return get_all_leads(current_user.get("org_id"))
 
 @mobile_api.post("/leads")
 def mobile_create_lead(lead: LeadCreate, current_user: dict = Depends(get_current_user)):
     try:
-        lead_id = create_lead(lead.dict())
+        lead_id = create_lead(lead.dict(), current_user.get("org_id"))
         return {"status": "success", "id": lead_id}
     except Exception as e:
         return {"status": "error", "message": str(e)}
@@ -1552,7 +1552,7 @@ def mobile_punch(punch: PunchCreate, current_user: dict = Depends(get_current_us
 
 @mobile_api.get("/tasks")
 def mobile_get_tasks(current_user: dict = Depends(get_current_user)):
-    return get_all_tasks()
+    return get_all_tasks(current_user.get("org_id"))
 
 @mobile_api.put("/tasks/{task_id}/complete")
 def mobile_complete_task(task_id: int, current_user: dict = Depends(get_current_user)):
