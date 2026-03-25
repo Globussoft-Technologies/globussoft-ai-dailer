@@ -893,11 +893,26 @@ export default function App() {
               <button className="btn-primary" onClick={() => setIsModalOpen(true)}>
                 + Add Lead
               </button>
-              {userRole === 'Admin' && (
+              {userRole === 'Admin' && (<>
                 <button className="btn-call" style={{borderColor: '#22c55e', color: '#22c55e', padding: '0 16px', height: '40px', background: 'rgba(34, 197, 94, 0.1)', cursor: 'pointer'}} onClick={() => window.open(`${API_URL}/leads/export`, '_blank')}>
                   📥 Export CSV
                 </button>
-              )}
+                <button className="btn-call" style={{borderColor: '#3b82f6', color: '#3b82f6', padding: '0 16px', height: '40px', background: 'rgba(59, 130, 246, 0.1)', cursor: 'pointer'}} onClick={() => document.getElementById('csv-import-input').click()}>
+                  📤 Import CSV
+                </button>
+                <input id="csv-import-input" type="file" accept=".csv" style={{display: 'none'}} onChange={async (e) => {
+                  const f = e.target.files[0]; if (!f) return;
+                  const fd = new FormData(); fd.append('file', f);
+                  try {
+                    const r = await fetch(`${API_URL}/leads/import-csv`, {method: 'POST', headers: {'Authorization': `Bearer ${token}`}, body: fd});
+                    const d = await r.json();
+                    alert(`✅ Imported ${d.imported} leads` + (d.errors?.length ? `\n⚠️ Errors:\n${d.errors.join('\n')}` : ''));
+                    fetchLeads();
+                  } catch (err) { alert('Import failed: ' + err.message); }
+                  e.target.value = '';
+                }} />
+                <a href={`${API_URL}/leads/sample-csv`} style={{color: '#94a3b8', fontSize: '13px', alignSelf: 'center', textDecoration: 'underline', cursor: 'pointer'}}>📋 Sample CSV</a>
+              </>)}
             </div>
           </div>
 

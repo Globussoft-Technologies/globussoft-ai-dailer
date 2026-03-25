@@ -286,6 +286,49 @@ def api_create_lead(lead: LeadCreate, current_user: dict = Depends(get_current_u
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
+@app.post("/api/leads/import-csv")
+async def api_import_csv(current_user: dict = Depends(get_current_user), file: UploadFile = File(...)):
+    """Import leads from a CSV file. Columns: first_name, last_name, phone, source"""
+    import csv, io, logging
+    _il = logging.getLogger("uvicorn.error")
+    org_id = current_user.get("org_id")
+    contents = await file.read()
+    text = contents.decode("utf-8-sig")  # Handle BOM from Excel
+    reader = csv.DictReader(io.StringIO(text))
+    imported = 0
+    errors = []
+    for i, row in enumerate(reader, start=2):
+        # Flexible column mapping
+        first_name = row.get("first_name") or row.get("name") or row.get("First Name") or ""
+        last_name = row.get("last_name") or row.get("Last Name") or ""
+        phone = row.get("phone") or row.get("phone_number") or row.get("Phone") or row.get("Mobile") or ""
+        source = row.get("source") or row.get("Source") or "CSV Import"
+        if not phone:
+            errors.append(f"Row {i}: missing phone")
+            continue
+        if not first_name:
+            errors.append(f"Row {i}: missing name")
+            continue
+        try:
+            create_lead({"first_name": first_name.strip(), "last_name": last_name.strip(),
+                        "phone": phone.strip(), "source": source.strip()}, org_id)
+            imported += 1
+        except Exception as e:
+            errors.append(f"Row {i}: {str(e)[:50]}")
+    _il.info(f"[CSV IMPORT] {imported} leads imported, {len(errors)} errors")
+    return {"status": "success", "imported": imported, "errors": errors[:10]}
+
+@app.get("/api/leads/sample-csv")
+def api_sample_csv():
+    """Download a sample CSV template for lead import."""
+    sample = "first_name,last_name,phone,source\nRahul,Sharma,+919876543210,Website\nPriya,Patel,+919876543211,Google Ads\n"
+    from starlette.responses import Response
+    return Response(
+        content=sample, media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=sample_leads.csv"}
+    )
+
+
 @app.put("/api/leads/{lead_id}")
 def api_update_lead(lead_id: int, lead: LeadCreate, current_user: dict = Depends(get_current_user)):
     try:
@@ -315,7 +358,7 @@ async def api_dial_lead(lead_id: int, background_tasks: BackgroundTasks):
     background_tasks.add_task(initiate_call, {
         "name": lead["first_name"],
         "phone_number": lead["phone"],
-        "interest": lead["source"],
+        "interest": lead.get("interest") or lead["source"],
         "provider": DEFAULT_PROVIDER,
         "lead_id": lead_id
     })
@@ -429,6 +472,41 @@ def api_get_organizations(current_user: dict = Depends(get_current_user)):
     if user_org_id:
         return [o for o in all_orgs if o["id"] == user_org_id]
     return all_orgs
+
+# ─── Live Logs Buffer ───────────────────────────────────────────
+import collections, logging as _ll_logging
+_live_log_buffer = collections.deque(maxlen=200)
+
+class _LiveLogHandler(_ll_logging.Handler):
+    def emit(self, record):
+        msg = self.format(record)
+        _live_log_buffer.append(msg)
+
+_llh = _LiveLogHandler()
+_llh.setFormatter(_ll_logging.Formatter('%(asctime)s %(levelname)s %(message)s', datefmt='%H:%M:%S'))
+_ll_logging.getLogger('uvicorn.error').addHandler(_llh)
+
+@app.get("/api/live-logs")
+async def api_live_logs(current_user: dict = Depends(get_current_user)):
+    """SSE endpoint streaming server logs to the dashboard."""
+    from starlette.responses import StreamingResponse
+    import asyncio as _sse_asyncio
+    async def _gen():
+        sent = len(_live_log_buffer)
+        # Send last 50 existing logs
+        for line in list(_live_log_buffer)[-50:]:
+            yield f"data: {line}\n\n"
+        while True:
+            await _sse_asyncio.sleep(0.5)
+            while sent < len(_live_log_buffer):
+                idx = sent - len(_live_log_buffer)  # negative index
+                if idx >= 0: break
+                try:
+                    yield f"data: {_live_log_buffer[idx]}\n\n"
+                except IndexError:
+                    break
+                sent += 1
+    return StreamingResponse(_gen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 @app.post("/api/organizations")
 def api_create_organization(payload: dict):
@@ -1369,6 +1447,14 @@ async def handle_media_stream(websocket: WebSocket):
 
                 # Forward raw audio to Deepgram
                 dg_connection.send(audio_data)
+                # Capture mic audio for recording (mulaw→PCM)
+                if is_exotel_stream:
+                    import time as _mic_t, audioop as _ao
+                    try:
+                        pcm = _ao.ulaw2lin(audio_data, 2)
+                        _recording_mic_chunks.append((_mic_t.time(), pcm))
+                    except Exception:
+                        pass
 
             # Handle text frames (Twilio sends JSON, Exotel may send JSON metadata)
             elif "text" in msg and msg["text"]:
@@ -1419,6 +1505,14 @@ async def handle_media_stream(websocket: WebSocket):
                 elif data.get("event") == "media":
                     raw_audio = base64.b64decode(data["media"]["payload"])
                     dg_connection.send(raw_audio)
+                    # Capture mic audio for recording (mulaw→PCM)
+                    if is_exotel_stream:
+                        import time as _mic_t2, audioop as _ao2
+                        try:
+                            pcm = _ao2.ulaw2lin(raw_audio, 2)
+                            _recording_mic_chunks.append((_mic_t2.time(), pcm))
+                        except Exception:
+                            pass
                 elif data.get("event") == "stop":
                     print("Media stream stopped.")
                     break
@@ -1493,9 +1587,9 @@ async def handle_media_stream(websocket: WebSocket):
                             import logging as _rlog2
                             _rlog2.getLogger("uvicorn.error").error(f"[RECORDING] Error fetching: {_re}")
 
-                    # Save local WAV recording from TTS chunks (browser sim or fallback)
+                    # Save local WAV recording from TTS chunks (fallback for all call types)
                     _rec_chunks = _tts_recording_buffers.get(stream_sid, [])
-                    if not recording_url and (_rec_chunks or _recording_mic_chunks):
+                    if not recording_url and _rec_chunks:
                         try:
                             import wave as _wave
                             import time as _t2

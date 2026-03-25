@@ -231,14 +231,22 @@ def get_lead_by_id(lead_id: int) -> Dict:
 def create_lead(data: dict, org_id: Optional[int] = None):
     conn = get_conn()
     cursor = conn.cursor()
+    # Auto-populate interest from org's first product if not provided
+    interest = data.get('interest')
+    if not interest and org_id:
+        cursor.execute('SELECT name FROM products WHERE org_id = %s LIMIT 1', (org_id,))
+        prod = cursor.fetchone()
+        if prod:
+            interest = prod['name']
     cursor.execute('''
-        INSERT INTO leads (first_name, last_name, phone, source, external_id, crm_provider, org_id)
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        INSERT INTO leads (first_name, last_name, phone, source, interest, external_id, crm_provider, org_id)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
     ''', (
         data.get('first_name'), 
         data.get('last_name', ''), 
         data.get('phone'), 
         data.get('source', 'Dashboard'),
+        interest,
         data.get('external_id'),
         data.get('crm_provider'),
         org_id

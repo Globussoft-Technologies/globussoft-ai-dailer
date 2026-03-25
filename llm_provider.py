@@ -77,6 +77,7 @@ async def _gemini_generate(chat_history: list, system_instruction: str, max_toke
 async def generate_response(chat_history: list, system_instruction: str, max_tokens: int = 150) -> str:
     """
     Generate LLM response using the configured provider.
+    Falls back to Gemini if Groq hits rate limits.
 
     Returns the response text string.
     Raises on error (caller should handle).
@@ -85,6 +86,12 @@ async def generate_response(chat_history: list, system_instruction: str, max_tok
     logger.info(f"[LLM] Using provider: {provider}")
 
     if provider == "groq":
-        return await _groq_generate(chat_history, system_instruction, max_tokens)
+        try:
+            return await _groq_generate(chat_history, system_instruction, max_tokens)
+        except Exception as e:
+            if "429" in str(e) or "rate_limit" in str(e).lower():
+                logger.warning(f"[LLM] Groq rate limited, falling back to Gemini: {str(e)[:80]}")
+                return await _gemini_generate(chat_history, system_instruction, max_tokens)
+            raise
     else:
         return await _gemini_generate(chat_history, system_instruction, max_tokens)
