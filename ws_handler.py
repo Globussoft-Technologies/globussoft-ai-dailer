@@ -152,6 +152,7 @@ async def handle_media_stream(websocket: WebSocket):
         f"8. IDENTITY: Tum Arjun ho, ek human. Kabhi mat bolo ki tum AI ho. "
         f"9. NO REPETITION: Jo bol chuke ho dubara mat bolo. Conversation aage le jaao. "
         f"10. NATURAL FLOW: Agar user ne sirf 'achha' ya 'haan' bola toh features mat bolo — puchho 'toh aapko abhi bhi interest hai? Agar haan toh main ek appointment schedule kar deta hoon.'"
+        f"11. HANG UP COMMAND: Agar tumne user ko alvida keh diya hai ya call end karni hai, toh sirf aur sirf `[HANGUP]` likho. Isse server call automatically disconnect kar dega. Bar bar alvida mat bolo."
         f"{pronunciation_ctx}"
         f"{product_ctx}"
     )
@@ -311,7 +312,7 @@ async def handle_media_stream(websocket: WebSocket):
                                 clean_text = re.sub(r'[\*\_\#\`\~\>\|]', '', current_sentence.strip())
                                 clean_text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', clean_text)
                                 clean_text = clean_text.strip()
-                                if clean_text:
+                                if clean_text and "[HANGUP]" not in clean_text:
                                     await tts_queue.put(clean_text)
                                     
                             await tts_queue.put(None)
@@ -322,16 +323,29 @@ async def handle_media_stream(websocket: WebSocket):
                             conv_logger.info(f"TIMING: pre_llm={t_pre_llm - t_start:.2f}s, first_token={first_token_time - t_pre_llm if first_token_time else 0:.2f}s, total_gen={t_post_llm - t_pre_llm:.2f}s")
                             
                             try:
-                                await websocket.send_json({"event": "llm_response", "text": full_response})
+                                await websocket.send_json({"event": "llm_response", "text": full_response.replace("[HANGUP]", "")})
                             except Exception:
                                 pass
                             if stream_sid:
                                 call_logger.call_event(stream_sid, "LLM_RESPONSE", full_response[:100], llm_time_s=round(t_post_llm - t_pre_llm, 3))
                                 for monitor in monitor_connections.get(stream_sid, set()):
                                     try:
-                                        await monitor.send_json({"type": "transcript", "role": "agent", "text": full_response})
+                                        await monitor.send_json({"type": "transcript", "role": "agent", "text": full_response.replace("[HANGUP]", "")})
                                     except Exception:
                                         pass
+                                        
+                            # AI Physical Disconnect Command Handler
+                            if "[HANGUP]" in full_response:
+                                conv_logger.info("[COMMAND] LLM explicitly commanded a websocket disconnect.")
+                                if stream_sid:
+                                    call_logger.call_event(stream_sid, "LLM_HANGUP", "AI explicitly ended the call block.")
+                                # Allow the TTS worker to naturally finish speaking the current buffer, then die
+                                await asyncio.sleep(5)
+                                try:
+                                    await websocket.close()
+                                except Exception:
+                                    pass
+                                return
                         except Exception as e:
                             import traceback
                             conv_logger.error(f"Error streaming LLM response: {e}")
