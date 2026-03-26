@@ -322,27 +322,50 @@ async def handle_exotel_recording(request: Request, background_tasks: Background
     return {"status": "success"}
 
 async def process_recording(recording_url: str, call_sid: str, phone: str):
-    from google import genai
-    from google.genai import types
+    import os
+    import time
+    from database import get_connection
+
     print(f"Downloading recording for {call_sid}...")
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
         try:
-            resp = await client.get(recording_url, auth=(EXOTEL_API_KEY, EXOTEL_API_TOKEN), follow_redirects=True)
-            audio_data = resp.content
+            # Exotel recordings typically don't require API auth on direct links, but follow redirects
+            resp = await client.get(recording_url)
+            audio_bytes = resp.content
+            
+            # Save file physically
+            os.makedirs("recordings", exist_ok=True)
+            mp3_filename = f"call_{call_sid}_{int(time.time() * 1000)}.mp3"
+            mp3_path = os.path.join("recordings", mp3_filename)
+            with open(mp3_path, "wb") as f:
+                f.write(audio_bytes)
+                
+            public_audio_url = f"{PUBLIC_URL}/api/recordings/{mp3_filename}"
+            print(f"[WEBHOOK SAVED] Successfully wrote {len(audio_bytes)} bytes to {mp3_path}")
+            
+            # Update Database!
+            conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE call_transcripts 
+                SET recording_url = %s, updated_at = CURRENT_TIMESTAMP
+                WHERE id = (
+                    SELECT id FROM (
+                        SELECT id FROM call_transcripts 
+                        WHERE lead_phone = %s 
+                        ORDER BY created_at DESC LIMIT 1
+                    ) as t
+                )
+            ''', (public_audio_url, phone))
+            conn.commit()
+            cursor.close()
+            conn.close()
+            print(f"[WEBHOOK DB SYNC] Attached {public_audio_url} to phone {phone}")
+            
         except Exception as e:
             print("Failed to download recording:", e)
             return
-    url = "https://api.deepgram.com/v1/listen?model=nova-3&language=en-IN&smart_format=true"
-    headers = {"Authorization": f"Token {os.getenv('DEEPGRAM_API_KEY')}"}
-    async with httpx.AsyncClient(timeout=120) as client:
-        try:
-            resp = await client.post(url, content=audio_data, headers=headers)
-            transcript = resp.json()["results"]["channels"][0]["alternatives"][0]["transcript"]
-        except Exception as e:
-            print("Transcription failed:", e)
-            return
-    if not transcript:
-        return
+            
     try:
         llm = genai.Client(api_key=os.getenv("GEMINI_API_KEY", "dummy"))
         reply = await llm.aio.models.generate_content(
