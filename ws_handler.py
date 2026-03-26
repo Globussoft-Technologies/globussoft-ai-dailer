@@ -456,14 +456,14 @@ async def handle_media_stream(websocket: WebSocket):
                             ws_logger.info(f"[RECORDING] Fetching for SID: {_exotel_call_sid}")
                             creds = f"{EXOTEL_API_KEY}:{EXOTEL_API_TOKEN}"
                             auth_b64 = base64.b64encode(creds.encode()).decode()
-                            # Exotel recording endpoint — may return JSON metadata or redirect to audio
-                            rec_api_url = f"https://api.exotel.com/v1/Accounts/{EXOTEL_ACCOUNT_SID}/Calls/{_exotel_call_sid}/Recording"
+                            # Exotel recording endpoint — append .json to avoid XML response
+                            rec_api_url = f"https://api.exotel.com/v1/Accounts/{EXOTEL_ACCOUNT_SID}/Calls/{_exotel_call_sid}/Recording.json"
                             async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as _hc:
                                 rec_resp = await _hc.get(rec_api_url, headers={"Authorization": f"Basic {auth_b64}"})
                             if rec_resp.status_code == 200:
                                 content_type = rec_resp.headers.get("content-type", "")
                                 ws_logger.info(f"[RECORDING] Response content-type: {content_type}, size: {len(rec_resp.content)} bytes")
-                                if "json" in content_type or "text" in content_type:
+                                if "json" in content_type or "text" in content_type or "xml" in content_type:
                                     # JSON response — extract RecordingUrl and download it
                                     try:
                                         rec_data = rec_resp.json()
