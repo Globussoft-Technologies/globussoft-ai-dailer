@@ -458,8 +458,10 @@ async def handle_media_stream(websocket: WebSocket):
                         true_name = info.get("name", "Customer")
                         old_name = lead_name
                         lead_name = true_name
+                        _call_lead_id = info.get("lead_id", _call_lead_id)
+                        _exotel_call_sid = call_sid
                         dynamic_context = dynamic_context.replace(f"Tum {old_name} ko call kar rahe ho", f"Tum {true_name} ko call kar rahe ho")
-                        ws_logger.info(f"[CONTEXT FIX] Successfully mapped CallSid {call_sid} to {true_name}! Dropped {old_name}.")
+                        ws_logger.info(f"[CONTEXT FIX] Successfully mapped CallSid {call_sid} to {true_name}, LeadID: {_call_lead_id}")
 
                     twilio_websockets[stream_sid] = websocket
                     monitor_connections[stream_sid] = set()
