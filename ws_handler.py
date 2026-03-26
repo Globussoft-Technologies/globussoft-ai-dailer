@@ -233,6 +233,14 @@ async def handle_media_stream(websocket: WebSocket):
                         # Start TTS Worker Queue for Streaming Pipeline
                         tts_queue = asyncio.Queue()
                         
+                        # [Phase 2: Conversational Backchanneling]
+                        # Only inject a filler word if the user spoke a meaningful sentence (>2 words)
+                        if len(sentence.split()) > 2:
+                            import random
+                            if random.random() < 0.6:  # 60% chance to trigger a human filler
+                                fillers = ["Hmm...", "Achha...", "Okay...", "Haan..."]
+                                await tts_queue.put(random.choice(fillers))
+                        
                         async def tts_worker():
                             try:
                                 while True:
@@ -347,7 +355,8 @@ async def handle_media_stream(websocket: WebSocket):
             encoding="linear16",
             sample_rate=8000,
             channels=1,
-            endpointing=300,
+            endpointing=200,          # Aggressive 200ms VAD endpointing
+            utterance_end_ms="1000",  # Force utterance generation
         )
     )
 
