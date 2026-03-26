@@ -169,17 +169,17 @@ def api_delete_lead(lead_id: int, current_user: dict = Depends(get_current_user)
         return {"status": "error", "message": str(e)}
 
 @api_router.put("/api/leads/{lead_id}/status")
-def api_update_lead_status(lead_id: int, payload: LeadStatusUpdate):
+def api_update_lead_status(lead_id: int, payload: LeadStatusUpdate, current_user: dict = Depends(get_current_user)):
     update_lead_status(lead_id, payload.status)
     return {"status": "success", "message": f"Lead {lead_id} updated to {payload.status}"}
 
 @api_router.post("/api/leads/{lead_id}/notes")
-def api_update_lead_note(lead_id: int, payload: NoteCreate):
+def api_update_lead_note(lead_id: int, payload: NoteCreate, current_user: dict = Depends(get_current_user)):
     update_lead_note(lead_id, payload.note)
     return {"status": "success"}
 
 @api_router.get("/api/leads/{lead_id}/draft-email")
-def api_draft_email(lead_id: int):
+def api_draft_email(lead_id: int, current_user: dict = Depends(get_current_user)):
     lead = get_lead_by_id(lead_id)
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
@@ -213,7 +213,7 @@ def api_get_tasks(current_user: dict = Depends(get_current_user)):
     return get_all_tasks(current_user.get("org_id"))
 
 @api_router.put("/api/tasks/{task_id}/complete")
-def api_complete_task(task_id: int):
+def api_complete_task(task_id: int, current_user: dict = Depends(get_current_user)):
     complete_task(task_id)
     return {"status": "success"}
 
@@ -222,7 +222,7 @@ def api_get_reports(current_user: dict = Depends(get_current_user)):
     return get_reports(current_user.get("org_id"))
 
 @api_router.get("/api/analytics")
-def api_get_analytics():
+def api_get_analytics(current_user: dict = Depends(get_current_user)):
     return get_analytics()
 
 @api_router.get("/api/whatsapp")
@@ -248,16 +248,16 @@ def api_punch(punch: PunchCreate):
 # --- Documents & Transcripts ---
 
 @api_router.post("/api/leads/{lead_id}/documents")
-def api_upload_document(lead_id: int, payload: DocumentCreate):
+def api_upload_document(lead_id: int, payload: DocumentCreate, current_user: dict = Depends(get_current_user)):
     upload_document(lead_id, payload.file_name, payload.file_url)
     return {"status": "success", "message": f"{payload.file_name} uploaded successfully."}
 
 @api_router.get("/api/leads/{lead_id}/documents")
-def api_get_documents(lead_id: int):
+def api_get_documents(lead_id: int, current_user: dict = Depends(get_current_user)):
     return get_documents_by_lead(lead_id)
 
 @api_router.get("/api/leads/{lead_id}/transcripts")
-def api_get_transcripts(lead_id: int):
+def api_get_transcripts(lead_id: int, current_user: dict = Depends(get_current_user)):
     return get_transcripts_by_lead(lead_id)
 
 # --- Organizations & Products ---
@@ -276,31 +276,31 @@ def api_create_organization(payload: dict):
     return {"status": "ok", "id": org_id}
 
 @api_router.delete("/api/organizations/{org_id}")
-def api_delete_organization(org_id: int):
+def api_delete_organization(org_id: int, current_user: dict = Depends(get_current_user)):
     delete_organization(org_id)
     return {"status": "ok"}
 
 @api_router.get("/api/organizations/{org_id}/products")
-def api_get_products(org_id: int):
+def api_get_products(org_id: int, current_user: dict = Depends(get_current_user)):
     return get_products_by_org(org_id)
 
 @api_router.post("/api/organizations/{org_id}/products")
-def api_create_product(org_id: int, payload: dict):
+def api_create_product(org_id: int, payload: dict, current_user: dict = Depends(get_current_user)):
     pid = create_product(org_id, payload.get("name", ""), payload.get("website_url", ""), payload.get("manual_notes", ""))
     return {"status": "ok", "id": pid}
 
 @api_router.put("/api/products/{product_id}")
-def api_update_product(product_id: int, payload: dict):
+def api_update_product(product_id: int, payload: dict, current_user: dict = Depends(get_current_user)):
     update_product(product_id, **{k: v for k, v in payload.items() if k in ('name', 'website_url', 'scraped_info', 'manual_notes')})
     return {"status": "ok"}
 
 @api_router.delete("/api/products/{product_id}")
-def api_delete_product_endpoint(product_id: int):
+def api_delete_product_endpoint(product_id: int, current_user: dict = Depends(get_current_user)):
     delete_product(product_id)
     return {"status": "ok"}
 
 @api_router.post("/api/products/{product_id}/scrape")
-async def api_scrape_product_website(product_id: int):
+async def api_scrape_product_website(product_id: int, current_user: dict = Depends(get_current_user)):
     import logging
     logger = logging.getLogger("uvicorn.error")
     conn = __import__('database').get_conn()
@@ -391,18 +391,34 @@ async def api_upload_recording(current_user: dict = Depends(get_current_user), f
         f.write(contents)
     _ul.info(f"[RECORDING] Client upload saved: {fpath} ({len(contents)} bytes)")
     if lead_id and lead_id.isdigit():
+        import asyncio
         rec_url = f"/api/recordings/{fname}"
         try:
             from database import get_conn
-            conn = get_conn()
-            cur = conn.cursor()
-            cur.execute("SELECT id FROM call_transcripts WHERE lead_id = %s ORDER BY id DESC LIMIT 1", (int(lead_id),))
-            row = cur.fetchone()
-            if row:
-                cur.execute("UPDATE call_transcripts SET recording_url = %s WHERE id = %s", (rec_url, row['id']))
-                _ul.info(f"[RECORDING] Updated transcript {row['id']} with URL: {rec_url}")
-            conn.commit()
-            conn.close()
+            # Poll up to 3 seconds for the transcript to be created by the ws_handler
+            for _ in range(6):
+                conn = get_conn()
+                cur = conn.cursor()
+                cur.execute("SELECT id, recording_url FROM call_transcripts WHERE lead_id = %s ORDER BY id DESC LIMIT 1", (int(lead_id),))
+                row = cur.fetchone()
+                
+                # Check if the latest transcript is missing a recording URL (meaning it's the new one)
+                is_missing = False
+                if row:
+                    if isinstance(row, dict) and not row.get('recording_url'):
+                        is_missing = True
+                    elif isinstance(row, tuple) and not row[1]:
+                        is_missing = True
+                        row = {'id': row[0]}
+                        
+                if is_missing:
+                    cur.execute("UPDATE call_transcripts SET recording_url = %s WHERE id = %s", (rec_url, row['id']))
+                    conn.commit()
+                    conn.close()
+                    _ul.info(f"[RECORDING] Updated transcript {row['id']} with URL: {rec_url}")
+                    break
+                conn.close()
+                await asyncio.sleep(0.5)
         except Exception as e:
             _ul.error(f"[RECORDING] DB update error: {e}")
     return {"status": "ok", "url": f"/api/recordings/{fname}"}
@@ -507,11 +523,11 @@ def api_delete_knowledge(file_id: int, filename: str, current_user: dict = Depen
 # --- Pronunciation Guide ---
 
 @api_router.get("/api/pronunciation")
-def get_pronunciations():
+def get_pronunciations(current_user: dict = Depends(get_current_user)):
     return get_all_pronunciations()
 
 @api_router.post("/api/pronunciation")
-async def create_pronunciation_endpoint(request: Request):
+async def create_pronunciation_endpoint(request: Request, current_user: dict = Depends(get_current_user)):
     data = await request.json()
     word = data.get("word", "").strip()
     phonetic = data.get("phonetic", "").strip()
@@ -521,7 +537,7 @@ async def create_pronunciation_endpoint(request: Request):
     return {"status": "ok", "word": word, "phonetic": phonetic}
 
 @api_router.delete("/api/pronunciation/{pronunciation_id}")
-def remove_pronunciation(pronunciation_id: int):
+def remove_pronunciation(pronunciation_id: int, current_user: dict = Depends(get_current_user)):
     ok = delete_pronunciation(pronunciation_id)
     return {"status": "ok" if ok else "not_found"}
 

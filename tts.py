@@ -64,9 +64,10 @@ async def _synthesize_smallest(text, stream_sid, websocket, tts_voice_override, 
                         else:
                             ulaw_chunk = audioop.lin2ulaw(chunk, 2)
                             b64_chunk = base64.b64encode(ulaw_chunk).decode('utf-8')
+                        payload_key = "stream_sid" if needs_raw_pcm else "streamSid"
                         await websocket.send_text(json.dumps({
                             "event": "media",
-                            "stream_sid": stream_sid,
+                            payload_key: stream_sid,
                             "media": {"payload": b64_chunk}
                         }))
                         chunk_count += 1

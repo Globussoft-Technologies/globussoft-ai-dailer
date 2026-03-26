@@ -222,7 +222,7 @@ async def handle_media_stream(websocket: WebSocket):
                         if _call_org_id:
                             try:
                                 import rag
-                                context = rag.retrieve_context(sentence, _call_org_id, top_k=2)
+                                context = await asyncio.to_thread(rag.retrieve_context, sentence, _call_org_id, top_k=2)
                                 if context:
                                     rag_context = "\n\n[COMPANY KNOWLEDGE - Check if this has facts relevant to the discussion and explicitly use it]:\n" + context
                             except Exception as e:
