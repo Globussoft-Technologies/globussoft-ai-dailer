@@ -333,8 +333,39 @@ async def process_recording(recording_url: str, call_sid: str, phone: str):
     except Exception as e:
         print("Summarization failed:", e)
         return
-    from database import update_call_note
+    from database import update_call_note, get_conn
     update_call_note(call_sid, summary, phone)
+
+    try:
+        # [PERMANENT AUDIO CAPTURE]
+        # Download the Exotel API Buffer and persist to disk native physical .mp3
+        rec_dir = os.path.join(os.path.dirname(__file__), "recordings")
+        os.makedirs(rec_dir, exist_ok=True)
+        rec_filename = f"exotel_{call_sid}.mp3"
+        
+        with open(os.path.join(rec_dir, rec_filename), "wb") as f:
+            f.write(audio_data)
+            
+        print(f"[EXOTEL-AUDIO] File persisted to {rec_filename}")
+            
+        # Hook it precisely onto the latest `call_transcripts` record dynamically so the CRM pulls it
+        clean_phone = ''.join(filter(str.isdigit, phone))
+        search_phone = clean_phone[-10:] if len(clean_phone) >= 10 else phone
+        
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute("SELECT id FROM leads WHERE phone LIKE %s ORDER BY id DESC LIMIT 1", (f"%{search_phone}%",))
+        lead_row = cur.fetchone()
+        
+        if lead_row:
+            cur.execute("SELECT id FROM call_transcripts WHERE lead_id = %s ORDER BY created_at DESC LIMIT 1", (lead_row['id'],))
+            tx_row = cur.fetchone()
+            if tx_row:
+                cur.execute("UPDATE call_transcripts SET recording_url = %s WHERE id = %s", (f"/api/recordings/{rec_filename}", tx_row['id']))
+                print(f"[EXOTEL-DB] Securely linked MP3 to Database ID: {tx_row['id']}")
+        conn.close()
+    except Exception as e:
+        print(f"[EXOTEL-ERROR] Failed to save physical recording: {e}")
 
 # ─── WebSocket Endpoints ─────────────────────────────────────────────────────
 
