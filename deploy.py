@@ -1,29 +1,18 @@
-import paramiko
+import subprocess
 
-host = "163.227.174.141"
-username = "empcloud-development"
-password = "Epm^%$#Dv98g89"
-
-client = paramiko.SSHClient()
-client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+print("Launching OpenSSH Pipeline...")
+cmd = [
+    "ssh",
+    "-i", r"C:\Users\Admin\.ssh\github-deploy-empcloud",
+    "-o", "StrictHostKeyChecking=no",
+    "empcloud-development@163.227.174.141",
+    "cd ~/callified-ai && git pull origin main && pkill -f uvicorn ; sleep 3 ; mysql -u callified -pCallified@2026 callified_ai -N -B -e \"SELECT transcript FROM call_transcripts ORDER BY id DESC LIMIT 1\""
+]
 
 try:
-    print("Connecting...")
-    client.connect(host, username=username, password=password, timeout=10)
-    print("Connected! Running deployment commands...")
-    
-    command = "cd ~/callified-ai && git pull origin main && echo 'Epm^%$#Dv98g89' | sudo -S systemctl restart callified-ai 2>&1"
-    
-    stdin, stdout, stderr = client.exec_command(command)
-    exit_status = stdout.channel.recv_exit_status()
-    
-    print("--- STDOUT ---")
-    print(stdout.read().decode().strip())
-    
-    print("--- STDERR ---")
-    print(stderr.read().decode().strip())
-    
-    print(f"--- Exit status: {exit_status} ---")
-    
-finally:
-    client.close()
+    result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+    print("--- TRANSCRIPT LOGS ---")
+    print(result.stdout.strip())
+except subprocess.CalledProcessError as e:
+    print("--- SSH ERROR ---")
+    print(e.stderr.strip() if e.stderr else e.output)
