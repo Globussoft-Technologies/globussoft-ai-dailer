@@ -467,7 +467,26 @@ async def handle_media_stream(websocket: WebSocket):
                                     # JSON response — extract RecordingUrl and download it
                                     try:
                                         rec_data = rec_resp.json()
-                                        remote_url = rec_data.get("Recording", {}).get("RecordingUrl") or rec_data.get("RecordingUrl")
+                                        # Exotel sometimes wraps in "Call" or "Recording"
+                                        call_obj = rec_data.get("Call", {})
+                                        remote_url = (
+                                            rec_data.get("Recording", {}).get("RecordingUrl") or 
+                                            rec_data.get("RecordingUrl") or
+                                            call_obj.get("RecordingUrl")
+                                        )
+                                        if not remote_url:
+                                            ws_logger.info(f"[RECORDING] Missing URL initially, waiting 10s for Exotel transcoding...")
+                                            await asyncio.sleep(10)
+                                            rec_resp2 = await _hc.get(rec_api_url, headers={"Authorization": f"Basic {auth_b64}"})
+                                            if rec_resp2.status_code == 200:
+                                                rec_data2 = rec_resp2.json()
+                                                call_obj2 = rec_data2.get("Call", {})
+                                                remote_url = (
+                                                    rec_data2.get("Recording", {}).get("RecordingUrl") or 
+                                                    rec_data2.get("RecordingUrl") or
+                                                    call_obj2.get("RecordingUrl")
+                                                )
+                                        
                                         if remote_url:
                                             ws_logger.info(f"[RECORDING] Got remote URL: {remote_url}, downloading...")
                                             async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as _hc2:
@@ -484,6 +503,10 @@ async def handle_media_stream(websocket: WebSocket):
                                                     f.write(audio_resp.content)
                                                 recording_url = f"/api/recordings/{_rec_fname}"
                                                 ws_logger.info(f"[RECORDING] Downloaded and saved: {_rec_path} ({len(audio_resp.content)} bytes)")
+                                            else:
+                                                ws_logger.warning(f"[RECORDING] Failed to download from {remote_url}, status={audio_resp.status_code}, len={len(audio_resp.content)}")
+                                        else:
+                                            ws_logger.warning(f"[RECORDING] Missing RecordingUrl even after retry. JSON payload: {rec_data}")
                                     except Exception as _je:
                                         ws_logger.error(f"[RECORDING] JSON parse or download error: {_je}")
                                 elif len(rec_resp.content) > 1000:
