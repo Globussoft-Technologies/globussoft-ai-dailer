@@ -364,7 +364,7 @@ async def handle_media_stream(websocket: WebSocket):
 
     dg_connection.start(
         LiveOptions(
-            model="nova-3",
+            model="nova-2",
             language="hi",
             encoding="linear16",
             sample_rate=8000,
@@ -383,7 +383,7 @@ async def handle_media_stream(websocket: WebSocket):
             try:
                 msg = await websocket.receive()
             except Exception as e:
-                ws_logger.error(f"[WS RECV ERROR] Connection lost: {e}")
+                ws_logger.error(f"[WS RECV ERROR] Connection lost: {e}", exc_info=True)
                 break
 
             if msg.get("type") == "websocket.disconnect":
@@ -429,6 +429,7 @@ async def handle_media_stream(websocket: WebSocket):
                 try:
                     data = json.loads(msg["text"])
                 except Exception as e:
+                    ws_logger.error(f"[WS JSON ERROR] Failed to parse msg: {e}", exc_info=True)
                     ws_logger.warning(f"Failed to parse WS text: {e}")
                     continue
 
@@ -694,7 +695,7 @@ async def sandbox_stream(websocket: WebSocket):
 
     dg_conn.on(LiveTranscriptionEvents.Transcript, on_message)
     await dg_conn.start(LiveOptions(
-        model="nova-3", language="en-US", encoding="linear16", sample_rate=16000, channels=1, endpointing=True
+        model="nova-2", language="en-US", encoding="linear16", sample_rate=16000, channels=1, endpointing=True
     ))
 
     try:
