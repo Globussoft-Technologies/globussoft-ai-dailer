@@ -335,7 +335,7 @@ async def process_recording(recording_url: str, call_sid: str, phone: str):
     import os
     import time
     import logging
-    from database import get_connection
+    from database import connect_db
     log = logging.getLogger("uvicorn.error")
 
     log.error(f"Downloading recording for {call_sid} from {recording_url}")
@@ -356,7 +356,7 @@ async def process_recording(recording_url: str, call_sid: str, phone: str):
             log.error(f"[WEBHOOK SAVED] Successfully wrote {len(audio_bytes)} bytes to {mp3_path}")
             
             # Update Database!
-            conn = get_connection()
+            conn = connect_db()
             cursor = conn.cursor()
             cursor.execute('''
                 UPDATE call_transcripts 
