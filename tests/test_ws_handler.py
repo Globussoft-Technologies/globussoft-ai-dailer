@@ -36,6 +36,3 @@ def test_monitor_call_websocket():
 @pytest.mark.asyncio
 async def test_sandbox_stream_logic():
     assert True
-            
-            # Just asserting connection stability and parse capability
-            assert True
