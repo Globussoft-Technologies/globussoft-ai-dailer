@@ -151,7 +151,7 @@ async def generate_response(chat_history: list, system_instruction: str, max_tok
     provider = LLM_PROVIDER
     logger.info(f"[LLM] Using provider: {provider}")
 
-    if provider == "groq":
+    if "groq" in provider or "groc" in provider:
         try:
             return await _groq_generate(chat_history, system_instruction, max_tokens)
         except Exception as e:
@@ -170,7 +170,7 @@ async def generate_response_stream(chat_history: list, system_instruction: str, 
     provider = LLM_PROVIDER
     logger.info(f"[LLM STREAM] Using provider: {provider}")
 
-    if provider == "groq":
+    if "groq" in provider or "groc" in provider:
         try:
             async for chunk in _groq_generate_stream(chat_history, system_instruction, max_tokens):
                 yield chunk
