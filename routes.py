@@ -75,13 +75,10 @@ api_router = APIRouter()
 
 @api_router.get("/api/debug/logs")
 def api_fetch_logs():
+    import subprocess
     try:
-        if os.path.exists("call_events.log"):
-            with open("call_events.log", "r", encoding="utf-8") as f:
-                content = f.read()
-                return {"logs": content[-30000:] if len(content) > 30000 else content}
-        else:
-            return {"error": "call_events.log not found on disk."}
+        res = subprocess.run(["journalctl", "-u", "callified-ai.service", "-n", "150", "--no-pager"], capture_output=True, text=True)
+        return {"logs": res.stdout}
     except Exception as e:
         return {"error": str(e)}
 
