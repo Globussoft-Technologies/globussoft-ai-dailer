@@ -383,7 +383,7 @@ async def process_recording(recording_url: str, call_sid: str, phone: str):
         llm = genai.Client(api_key=os.getenv("GEMINI_API_KEY", "dummy"))
         reply = await llm.aio.models.generate_content(
             model="gemini-2.5-flash", contents=transcript,
-            config=types.GenerateContentConfig(system_instruction="You are an AI assistant for a Real Estate Brokerage (BDRPL). Analyze the sales call transcript and produce a structured Follow-Up Note.")
+            config=types.GenerateContentConfig(system_instruction="You are a professional AI assistant. Analyze the sales call transcript and produce a structured Follow-Up Note.")
         )
         summary = reply.text
     except Exception as e:

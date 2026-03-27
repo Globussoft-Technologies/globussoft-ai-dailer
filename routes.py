@@ -196,7 +196,7 @@ def api_draft_email(lead_id: int, current_user: dict = Depends(get_current_user)
     if not note:
         note = "Interested in exploring the latest property listings."
     prompt = f"""
-    You are an expert Real Estate Consultant at BDRPL. 
+    You are an expert Sales Consultant. 
     The client's name is {lead.get('first_name', 'Client')} {lead.get('last_name', '')}.
     Your latest timeline note says: "{note}".
     Draft a highly professional, persuasive 3-sentence follow-up email based on this note.

@@ -5,7 +5,7 @@ This document dictates the core schema used across all environments. The project
 ## Core Tables
 
 ### 1. `organizations`
-Multi-tenant core table tracking different Real Estate branches or distinct companies.
+Multi-tenant core table tracking different organizational branches or distinct companies.
 - `id` (INT PK)
 - `name` (VARCHAR)
 - `created_at` (TIMESTAMP)
@@ -46,7 +46,7 @@ Tracks telecom states and Deepgram dialogue arrays.
   - `call_duration_s` (FLOAT)
 
 ### 5. `products`
-Real estate properties or inventory items sold by the Organization. Ingested dynamically by the Gemini payload over `get_product_knowledge_context()`.
+Products, services, or inventory items sold by the Organization. Ingested dynamically by the Gemini payload over `get_product_knowledge_context()`.
 - `id` (INT PK)
 - `org_id` (INT FK)
 - `name` (VARCHAR) - e.g. "Green Valley Project"
@@ -56,7 +56,7 @@ Real estate properties or inventory items sold by the Organization. Ingested dyn
 
 ### 6. `sites` & `punches`
 Geofencing Field Operations Engine.
-- **sites**: Real estate locations with `lat`/`lon` targets.
+- **sites**: Physical locations with `lat`/`lon` targets.
 - **punches**: Agent check-ins containing computed haversine distance `status` (Valid/Invalid).
 
 ### 7. `tasks`
