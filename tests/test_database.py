@@ -282,3 +282,12 @@ def test_org_voice_settings(mock_db):
     assert sett3["tts_language"] == "hi"
 
     assert database.save_org_voice_settings(1, "dummy", "dummyid", "hi") is True
+
+def test_knowledge_base(mock_db):
+    assert database.log_knowledge_file(1, "test.pdf") == 1
+    assert database.update_knowledge_file_status(1, "Active", 100) is True
+    
+    mock_db.fetchall.return_value = [{"id": 1, "filename": "test.pdf"}]
+    assert len(database.get_knowledge_files(1)) == 1
+    
+    assert database.delete_knowledge_file(1, 1) is True
