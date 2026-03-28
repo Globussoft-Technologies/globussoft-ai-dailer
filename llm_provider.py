@@ -13,7 +13,7 @@ import logging
 
 logger = logging.getLogger("uvicorn.error")
 
-LLM_PROVIDER = os.getenv("LLM_PROVIDER", "groq").lower()
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "gemini").lower()
 
 # ─── Groq Provider ───────────────────────────────────────────────────────────
 
@@ -152,13 +152,19 @@ async def generate_response(chat_history: list, system_instruction: str, max_tok
     logger.info(f"[LLM] Using provider: {provider}")
 
     if "groq" in provider or "groc" in provider:
+        # If explicitly told to strictly use Groq, don't default to Gemini first
         try:
             return await _groq_generate(chat_history, system_instruction, max_tokens)
         except Exception as e:
             logger.warning(f"[LLM] Groq failed, falling back to Gemini: {str(e)[:80]}")
             return await _gemini_generate(chat_history, system_instruction, max_tokens)
     else:
-        return await _gemini_generate(chat_history, system_instruction, max_tokens)
+        # Default behavior: Try Gemini, Fallback to Groq
+        try:
+            return await _gemini_generate(chat_history, system_instruction, max_tokens)
+        except Exception as e:
+            logger.warning(f"[LLM] Gemini failed, falling back to Groq: {str(e)[:80]}")
+            return await _groq_generate(chat_history, system_instruction, max_tokens)
 
 
 async def generate_response_stream(chat_history: list, system_instruction: str, max_tokens: int = 150):
@@ -177,5 +183,10 @@ async def generate_response_stream(chat_history: list, system_instruction: str, 
             async for chunk in _gemini_generate_stream(chat_history, system_instruction, max_tokens):
                 yield chunk
     else:
-        async for chunk in _gemini_generate_stream(chat_history, system_instruction, max_tokens):
-            yield chunk
+        try:
+            async for chunk in _gemini_generate_stream(chat_history, system_instruction, max_tokens):
+                yield chunk
+        except Exception as e:
+            logger.warning(f"[LLM] Gemini failed on STREAM, falling back to Groq: {str(e)[:80]}")
+            async for chunk in _groq_generate_stream(chat_history, system_instruction, max_tokens):
+                yield chunk
