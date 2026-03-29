@@ -1,35 +1,52 @@
-# Callified AI: Architecture & Modules
+# Callified AI Dialer Architecture Trace
 
-The backend operates strictly via FastAPI (`uvicorn main:app`). As of Release 1, it successfully processes Bidirectional WebSockets for Sub-Second Audio Pipeline Streaming.
+Below is a comprehensive trace of the AI Dialer codebase and its fundamental design architecture based on deep-dive investigation.
 
-## Voice Pipeline (`ws_handler.py`)
-This file is the heartbeat of the AI Dialer.
+## Core System Flow & Microservices
 
-1. **Inbound Connection**: Twilio/Exotel Webhook invokes the WebSocket route.
-2. **Deepgram STT (Listener)**: Ingests raw audio bytes from caller. We use an aggressive `LiveOptions(endpointing=300)` for hyper-fast barge-in detection.
-3. **LLM Loop (`llm_provider.py`)**: When the user stops speaking, Gemini/Groq begins **Streaming** the LLM tokens immediately chunk by chunk through an asynchronous generator.
-4. **Sentence Aggregator (`ws_handler.py`)**: As chunks arrive, NLTK/RegEx looks for boundary tokens (`?`, `!`, `.`, `\n`). The moment a boundary is hit, the finished sentence is dropped into a background `asyncio.Queue`.
-5. **TTS Worker (`tts.py`)**: A parallel background loop constantly consumes sentences from the `asyncio.Queue`. It fires the sentence to ElevenLabs, instantly dumping `PCM/u-law` audio back over the phone port before the LLM has even finished reasoning the next paragraph.
+The repository operates on a monolithic FastAPI backend with distinct sub-modules loosely coupled for horizontal scaling.
 
-*Result*: Sub-800ms Time-To-First-Byte audio latency.
+1. **Client Interface**: Users connect via HTTP/REST for the web dashboard or via WebSockets for the live test-sandbox. Remote telephony providers (e.g. Exotel) connect directly to the raw WebSocket endpoints.
+2. **Real-time Pipeline**: Once a WebSocket connection is active, audio bytes are sent to **Deepgram** for transcription. Transcripts trigger an LLM (Gemini/Groq) to generate a response, which is then dynamically synthesized by **ElevenLabs** or **Google Cloud TTS**.
+3. **Data Layer**: A centralized MySQL Database accessed via `pymysql` maintains state across organizations, leads, products, and configurations.
+4. **Knowledge Retrieval**: FAISS vector indices provide real-time document context to the LLM.
 
-## Frontend Dashboard
-The frontend is a containerized `Vite React` architecture located perfectly in `frontend/src`.
-- Modularized tabs: `<CrmTab />`, `<OpsTab />`, `<SettingsTab />`.
-- Contextual state flows using purely hooks to fetch from the FastAPI `auth` routes natively seamlessly.
+## Directory Subsystems
 
-## External Endpoints
-- `/api/auth/` (Login, Registration, Verification)
-- `/api/leads` (Lead array dumping, CSV export engines)
-- `/api/products` (Dynamic KB ingestion)
+### 1. `main.py`
+Acts as the central orchestrator and ASGI app.
+* **Bootstrapping**: Initializes the FastAPI app, manages environment variables (`EXOTEL_API_KEY`, etc.), and mounts sub-routers (`auth.py`, `routes.py`, `live_logs.py`, `ws_handler.py`).
+* **Background Process**: Defines `poll_crm_leads()` which runs as an `asyncio.create_task` loop inside the main process to check external CRM APIs every 60 seconds for new leads.
+* **Dial Management**: Includes fallback methods for WhatsApp triggering and bridging out to Twilio/Exotel via REST.
 
-All queries bypass ORMs and use bare `pymysql.cursors.DictCursor` mapping for millisecond velocity in `database.py`.
+### 2. `ws_handler.py` (The Heart of Realtime)
+Handles the full-duplex bi-directional streaming of AI calls.
+* **Connections**: Listens on `/ws/sandbox` (React microphone testing) and `/media-stream` (Exotel raw μ-law testing).
+* **Pipeline Integration**: Re-packages raw byte packets and ships them to Deepgram for live transcription. When Deepgram triggers `on_message`, the handler hits `llm_provider.py` and streams those chunks dynamically into `tts.py`.
+* **State Management**: Uses memory dictionaries like `whisper_queues`, `active_tts_tasks`, and `takeover_active` to manage asynchronous racing conditions between AI replies and human barge-in ("listening...").
 
-## Quality Assurance & Testing
-The repository contains a unified End-to-End (E2E) robust testing architecture located in `tests/e2e/`. These tests abandon isolated function mocks in favor of performing native HTTP lifecycles directly against deployed architectures.
+### 3. `database.py`
+The sole persistence layer of the app.
+* Runs on pure `pymysql` with raw SQL queries mapping to `callified_ai`.
+* Handles over 15 distinct entities: `leads`, `calls`, `tasks`, `documents`, `products`, `knowledge_base`, `pronunciation_guide`, etc.
+* **Domain Triggers**: Embeds domain-logic inside writes (e.g., cross-department automation when `status='Closed'` or WhatsApp Nudge generation when `status='Warm'`).
 
-The execution environments are mapped dynamically via top-level runner scripts:
-- **`run_local_e2e.py`**: Executes tests aggressively against `http://localhost:8000`.
-- **`run_server_e2e.py`**: Intercepts routing directly mapped to `https://test.callified.ai`.
+### 4. `routes.py`
+Exposes the CRUD endpoints for your Next.js Frontend.
+* Contains `/api/leads`, `/api/tasks`, `/api/products`, `/api/knowledge/upload`, etc.
+* **Scraping Capability**: Implements an HTTP scraping crawler inside `/api/products/{product_id}/scrape` using Llama-3 parsing when product pages are linked.
+* Includes a fully replicated Mobile API namespace via `APIRouter(prefix="/api/mobile")`.
 
-The `conftest` authentication hooks automatically spawn JWT credentials during bootstrap to bypass login wrappers systematically across test dimensions.
+### 5. `rag.py` & Vector Search
+The local Knowledge Base Retrieval tool.
+* Bypasses heavy cloud vector databases by utilizing local `faiss` indices.
+* Embeds documents using the lightweight, open-source `sentence-transformers` (`all-MiniLM-L6-v2`) locally within the CPU environment.
+* Generates `.index` dumps and metadata inside a dynamically created `/faiss_indexes/` repository folder.
+
+### 6. `tts.py` & `llm_provider.py`
+External Model Clients.
+* **`tts.py`**: Fetches Voice Settings from the database context and fires off streaming requests to ElevenLabs or Google Cloud TTS.
+* **`llm_provider.py`**: A fallback wrapper that defaults to Groq (Llama-3 70b) and falls back to Gemini `1.5-flash`.
+
+## Performance Hotspots
+The design of `ws_handler.py` relies heavily on Global Memory state dictionaries (`active_tts_tasks`, `whisper_queues`). As call concurrency grows beyond 50-100 simultaneous calls per server, utilizing `Redis` queues will be essential to prevent race conditions or memory leaks inside the ASGI event loop.

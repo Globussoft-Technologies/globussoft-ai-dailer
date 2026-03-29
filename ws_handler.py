@@ -517,6 +517,14 @@ async def handle_media_stream(websocket: WebSocket):
             call_logger.call_event(stream_sid, "WS_ERROR", str(e))
     finally:
         logging.getLogger("uvicorn.error").info(f"[WS CLOSED] sid={stream_sid}, turns={len(chat_history)}, exotel={is_exotel_stream}")
+        
+        # Cleanup any active TTS tasks to prevent dangling background processes
+        if stream_sid in active_tts_tasks:
+            t = active_tts_tasks[stream_sid]
+            if not t.done():
+                t.cancel()
+            del active_tts_tasks[stream_sid]
+            
         if stream_sid:
             call_logger.call_event(stream_sid, "WS_DISCONNECTED", f"turns={len(chat_history)}")
             call_logger.end_call(stream_sid)

@@ -42,6 +42,61 @@ sequenceDiagram
     Dialer->>CRM: 7. Mutates CRM Object (Status to Warm/Closed + Note)
 ```
 
+## 🧠 Core System Flow & Microservices
+
+```mermaid
+graph TD;
+    User/Browser-->|HTTP/REST| API(fastAPI: routes.py)
+    API-->DB(database.py: MySQL)
+    User/Browser-->|WebSocket| WS(ws_handler.py)
+    Exotel-->|Raw WebSocket| WS(ws_handler.py)
+    
+    WS-->Deepgram(STT: DeepgramClient)
+    Deepgram-->|Transcription event| LLM(LLM_Provider: Gemini/Groq)
+    LLM-->TTS(TTS Engine: ElevenLabs)
+    TTS-->|PCM Audio stream| WS
+    WS-->|Playback bytes| Exotel
+    
+    API-->RAG(rag.py: FAISS/Transformers)
+    RAG-->DB
+```
+
+### 1. `main.py`
+Acts as the central orchestrator and ASGI app.
+* **Bootstrapping**: Initializes the FastAPI app, manages environment variables (`EXOTEL_API_KEY`, etc.), and mounts sub-routers (`auth.py`, `routes.py`, `live_logs.py`, `ws_handler.py`).
+* **Background Process**: Defines `poll_crm_leads()` which runs as an `asyncio.create_task` loop inside the main process to check external CRM APIs every 60 seconds for new leads.
+* **Dial Management**: Includes fallback methods for WhatsApp triggering and bridging out to Twilio/Exotel via REST before the call shifts to WebSockets.
+
+### 2. `ws_handler.py` (The Heart of Realtime)
+Handles the full-duplex bi-directional streaming of AI calls.
+* **Connections**: Listens on `/ws/sandbox` (React microphone testing) and `/media-stream` (Exotel raw μ-law testing).
+* **Pipeline Integration**: Re-packages raw byte packets and ships them to Deepgram for live transcription. When Deepgram issues an `on_message` callback, the handler hits `llm_provider.py` and streams those chunks dynamically into `tts.py`.
+* **State Management**: Uses memory dictionaries like `whisper_queues`, `active_tts_tasks`, and `takeover_active` to manage asynchronous racing conditions between AI replies and human barge-in ("listening...").
+
+### 3. `database.py`
+The sole persistence layer of the app.
+* Runs on pure `pymysql` with raw SQL queries mapping to `callified_ai`.
+* Handles over 15 distinct entities: `leads`, `calls`, `tasks`, `documents`, `products`, `knowledge_base`, `pronunciation_guide`, etc.
+* **Domain Triggers**: Embeds domain-logic inside writes (e.g. cross-department automation when `status="Closed"` or WhatsApp Nudge generation when `status="Warm"`).
+
+### 4. `routes.py`
+Exposes the CRUD endpoints for your Next.js Frontend.
+* Contains `/api/leads`, `/api/tasks`, `/api/products`, `/api/knowledge/upload`, etc.
+* **Scraping Capability**: Implements an HTTP scraping crawler inside `/api/products/{product_id}/scrape` using Llama-3 parsing when product pages are linked.
+* Includes a fully replicated Mobile API namespace via `APIRouter(prefix="/api/mobile")`.
+
+### 5. `rag.py` & Vector Search
+The local Knowledge Base Retrieval tool.
+* Bypasses heavy cloud vector databases by utilizing local `faiss` indices.
+* Embeds documents using the lightweight, open-source `sentence-transformers` (`all-MiniLM-L6-v2`) locally within the CPU environment.
+* Generates `.index` dumps and metadata inside a dynamically created `/faiss_indexes/` repository folder.
+
+### 6. `tts.py` & `llm_provider.py`
+External Model Clients.
+* **`tts.py`**: Fetches Voice Settings from the database context and fires off streaming requests to ElevenLabs or Google Cloud TTS, ensuring the audio is returned in the precise sample rate chunked formats (`PCM 16000` or `PCM 8000 mu-law`).
+* **`llm_provider.py`**: A fallback wrapper that defaults to Groq (Llama-3 70b) and falls back to Gemini `1.5-flash` natively to ensure 99% uptime on generation.
+
+
 ## Features Developed
 
 1. **Multilingual AI Voice Agent (Dialer)**
@@ -106,6 +161,14 @@ sequenceDiagram
 
 14. **Clean Componentized React Architecture**
     - The monolith Dashboard is split cleanly into discrete `<CrmTab />`, `<OpsTab />`, and `<SettingsTab />` JSX modules.
+
+15. **Local FAISS Knowledge Base (RAG)**
+    - Performs localized vector retrieval without external databases.
+    - Uses `sentence-transformers` to chunk and embed `.pdf` documents directly into the local `faiss_indexes` folder for lightning-fast knowledge ingestion.
+
+16. **Deep Backend WebSocket Automation Tests**
+    - Simulates Exotel bytes and Sandbox WebSockets directly inside the ASGI thread.
+    - Intercepts LLM, STT, and TTS engines down to the microsecond level so development CI/CD pipelines run natively without live API costs.
 
 ## 🛠 Getting Started
 
@@ -225,6 +288,11 @@ The project abandons traditional local mocking in favor of two controllable End-
 To verify codebase integrity, run one of the two top-level triggers based on the environment you are validating:
 
 ```bash
+# Validate core backend WebSockets (Sandbox + Exotel Streams natively via TestClient)
+# Uses mock providers to verify STT/TTS routing without burning API tokens.
+python -m pytest tests/e2e/test_ws_core.py -v --cov=ws_handler --cov-report=term-missing
+
+# E2E Script triggers for full environment runs:
 # Validates your active localhost (http://localhost:8000)
 python run_local_e2e.py
 
