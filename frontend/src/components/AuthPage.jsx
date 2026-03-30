@@ -25,13 +25,13 @@ export default function AuthPage({
 
         <div className="glass-panel" style={{padding: '2rem'}}>
           <div style={{display: 'flex', marginBottom: '1.5rem', borderRadius: '8px', overflow: 'hidden', border: '1px solid rgba(255,255,255,0.1)'}}>
-            <button onClick={() => { setAuthPage('login'); setAuthError(''); }}
+            <button data-testid="auth-login-tab" onClick={() => { setAuthPage('login'); setAuthError(''); }}
               style={{flex: 1, padding: '10px', border: 'none', cursor: 'pointer', fontWeight: 600, fontSize: '0.9rem',
                 background: authPage === 'login' ? 'rgba(167,139,250,0.2)' : 'transparent',
                 color: authPage === 'login' ? '#a78bfa' : '#64748b'}}>
               Login
             </button>
-            <button onClick={() => { setAuthPage('signup'); setAuthError(''); }}
+            <button data-testid="auth-signup-tab" onClick={() => { setAuthPage('signup'); setAuthError(''); }}
               style={{flex: 1, padding: '10px', border: 'none', cursor: 'pointer', fontWeight: 600, fontSize: '0.9rem',
                 background: authPage === 'signup' ? 'rgba(34,211,238,0.2)' : 'transparent',
                 color: authPage === 'signup' ? '#22d3ee' : '#64748b'}}>
@@ -50,27 +50,27 @@ export default function AuthPage({
               <>
                 <div className="form-group">
                   <label>Organization Name</label>
-                  <input className="form-input" placeholder="e.g. Globussoft" required
+                  <input data-testid="auth-org-name" className="form-input" placeholder="e.g. Globussoft" required
                     value={authForm.org_name} onChange={e => setAuthForm({...authForm, org_name: e.target.value})} />
                 </div>
                 <div className="form-group">
                   <label>Your Full Name</label>
-                  <input className="form-input" placeholder="e.g. Sumit Kumar" required
+                  <input data-testid="auth-full-name" className="form-input" placeholder="e.g. Sumit Kumar" required
                     value={authForm.full_name} onChange={e => setAuthForm({...authForm, full_name: e.target.value})} />
                 </div>
               </>
             )}
             <div className="form-group">
               <label>Email</label>
-              <input className="form-input" type="email" placeholder="you@company.com" required
+              <input data-testid="auth-email" className="form-input" type="email" placeholder="you@company.com" required
                 value={authForm.email} onChange={e => setAuthForm({...authForm, email: e.target.value})} />
             </div>
             <div className="form-group">
               <label>Password</label>
-              <input className="form-input" type="password" placeholder="••••••••" required minLength={6}
+              <input data-testid="auth-password" className="form-input" type="password" placeholder="••••••••" required minLength={6}
                 value={authForm.password} onChange={e => setAuthForm({...authForm, password: e.target.value})} />
             </div>
-            <button type="submit" className="btn-primary" disabled={authLoading}
+            <button data-testid="auth-submit" type="submit" className="btn-primary" disabled={authLoading}
               style={{width: '100%', padding: '12px', marginTop: '0.5rem', fontSize: '1rem', fontWeight: 700,
                 background: authPage === 'login' ? 'linear-gradient(135deg, #a78bfa, #7c3aed)' : 'linear-gradient(135deg, #22d3ee, #06b6d4)'}}>
               {authLoading ? '⏳ Please wait...' : (authPage === 'login' ? '🔐 Login' : '🚀 Create Account')}

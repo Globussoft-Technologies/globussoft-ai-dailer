@@ -3,10 +3,12 @@ auth.py — Authentication module for Callified AI Dialer.
 Handles JWT tokens, password hashing, login, signup, and user retrieval.
 """
 import os
+import time
+import threading
 import jwt
 from typing import Optional
 from datetime import datetime, timedelta
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.security import OAuth2PasswordBearer
 from passlib.context import CryptContext
 from pydantic import BaseModel
@@ -20,6 +22,56 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
+
+# ─── Rate Limiter ───────────────────────────────────────────────────────────
+
+class RateLimiter:
+    """Simple in-memory rate limiter keyed by IP address."""
+
+    def __init__(self):
+        self._hits: dict[str, list[float]] = {}
+        self._lock = threading.Lock()
+
+    def is_rate_limited(self, key: str, limit: int, window: int) -> bool:
+        """Return True if *key* has exceeded *limit* requests in *window* seconds."""
+        now = time.time()
+        with self._lock:
+            timestamps = self._hits.get(key, [])
+            # Prune entries older than the window
+            timestamps = [t for t in timestamps if now - t < window]
+            if len(timestamps) >= limit:
+                self._hits[key] = timestamps
+                return True
+            timestamps.append(now)
+            self._hits[key] = timestamps
+            return False
+
+    def cleanup(self, window: int = 60):
+        """Remove all entries older than *window* seconds."""
+        now = time.time()
+        with self._lock:
+            keys_to_delete = []
+            for key, timestamps in self._hits.items():
+                self._hits[key] = [t for t in timestamps if now - t < window]
+                if not self._hits[key]:
+                    keys_to_delete.append(key)
+            for key in keys_to_delete:
+                del self._hits[key]
+
+_rate_limiter = RateLimiter()
+
+def check_rate_limit(request: Request, limit: int, window: int = 60):
+    """Raise HTTP 429 if the client IP exceeds the allowed rate."""
+    client_ip = request.client.host if request.client else "unknown"
+    endpoint = request.url.path
+    key = f"{client_ip}:{endpoint}"
+    if _rate_limiter.is_rate_limited(key, limit, window):
+        # Opportunistic cleanup of stale entries
+        _rate_limiter.cleanup(window)
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many requests. Limit is {limit} per {window}s. Please try again later.",
+        )
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -80,8 +132,9 @@ class LoginRequest(BaseModel):
 auth_router = APIRouter()
 
 @auth_router.post("/api/auth/signup")
-def signup(data: OrgSignup):
+def signup(data: OrgSignup, request: Request):
     """Create organization + admin user in one step."""
+    check_rate_limit(request, limit=5, window=60)
     existing = get_user_by_email(data.email)
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -95,7 +148,8 @@ def signup(data: OrgSignup):
     }
 
 @auth_router.post("/api/auth/login")
-def login(data: LoginRequest):
+def login(data: LoginRequest, request: Request):
+    check_rate_limit(request, limit=10, window=60)
     user = get_user_by_email(data.email)
     if not user or not verify_password(data.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Incorrect email or password")

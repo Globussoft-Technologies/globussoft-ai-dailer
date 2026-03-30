@@ -26,9 +26,10 @@ export default function SettingsTab({
             <input 
               className="form-input" 
               required 
-              value={pronFormData.word} 
-              onChange={e => setPronFormData({...pronFormData, word: e.target.value})} 
-              placeholder="e.g. Adsgpt" 
+              value={pronFormData.word}
+              onChange={e => setPronFormData({...pronFormData, word: e.target.value})}
+              placeholder="e.g. Adsgpt"
+              data-testid="pron-word" 
             />
           </div>
           <div style={{fontSize: '1.5rem', color: '#64748b', paddingBottom: '8px'}}>→</div>
@@ -37,12 +38,13 @@ export default function SettingsTab({
             <input 
               className="form-input" 
               required 
-              value={pronFormData.phonetic} 
-              onChange={e => setPronFormData({...pronFormData, phonetic: e.target.value})} 
-              placeholder="e.g. Ads G P T" 
+              value={pronFormData.phonetic}
+              onChange={e => setPronFormData({...pronFormData, phonetic: e.target.value})}
+              placeholder="e.g. Ads G P T"
+              data-testid="pron-phonetic" 
             />
           </div>
-          <button type="submit" className="btn-primary" style={{height: '46px', padding: '0 20px', whiteSpace: 'nowrap'}}>
+          <button data-testid="add-rule-btn" type="submit" className="btn-primary" style={{height: '46px', padding: '0 20px', whiteSpace: 'nowrap'}}>
             + Add Rule
           </button>
         </form>
@@ -113,11 +115,11 @@ export default function SettingsTab({
           <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem'}}>
             <h4 style={{marginTop: 0, marginBottom: 0, fontSize: '1.1rem', fontWeight: 600, color: '#22d3ee'}}>📦 Products in {selectedOrg.name}</h4>
             {!showProductInput ? (
-              <button className="btn-primary" style={{background: 'linear-gradient(135deg, #22d3ee, #06b6d4)', fontSize: '0.85rem', padding: '6px 14px'}}
+              <button data-testid="add-product-btn" className="btn-primary" style={{background: 'linear-gradient(135deg, #22d3ee, #06b6d4)', fontSize: '0.85rem', padding: '6px 14px'}}
                 onClick={() => setShowProductInput(true)}>+ Add Product</button>
             ) : (
               <div style={{display: 'flex', gap: '8px', alignItems: 'center'}}>
-                <input className="form-input" autoFocus placeholder="Product name (e.g. AdsGPT)..."
+                <input data-testid="product-name-input" className="form-input" autoFocus placeholder="Product name (e.g. AdsGPT)..."
                   value={newProductName} onChange={e => setNewProductName(e.target.value)}
                   onKeyDown={e => e.key === 'Enter' && handleAddProduct()}
                   style={{width: '220px', height: '36px', fontSize: '0.85rem'}} />

@@ -1,6 +1,7 @@
 import os
 import time
 import pytest
+import requests
 from playwright.sync_api import Page, expect
 
 BASE_URL = os.getenv("E2E_BASE_URL", "https://test.callified.ai")
@@ -10,6 +11,7 @@ TEST_USER_PW = os.getenv("E2E_USER_PASSWORD", "AutoTest!2026")
 
 # Track whether the session user has been created yet
 _user_created = False
+_auth_token = None
 
 
 def navigate_with_cache_bust(page, url="/"):
@@ -29,7 +31,7 @@ def auth_context(browser, base_url):
     Creates a new browser context. Signs up on first call, logs in on subsequent calls.
     Returns the authenticated context.
     """
-    global _user_created
+    global _user_created, _auth_token
 
     context = browser.new_context(base_url=base_url, viewport={"width": 1280, "height": 800})
     page = context.new_page()
@@ -48,6 +50,17 @@ def auth_context(browser, base_url):
         page.fill('input[type="password"]', TEST_USER_PW)
         page.locator("button.btn-primary").click()
         page.wait_for_selector("button:has-text('Logout')", timeout=15000)
+
+        # Grab auth token from API for cleanup later
+        try:
+            resp = requests.post(f"{base_url}/api/auth/login", json={
+                "email": TEST_USER_EMAIL, "password": TEST_USER_PW
+            })
+            if resp.status_code == 200:
+                _auth_token = resp.json().get("access_token")
+        except Exception:
+            pass
+
         _user_created = True
     else:
         # Subsequent: login with existing credentials
@@ -69,3 +82,20 @@ def auth_page(auth_context):
     page = auth_context.new_page()
     yield page
     page.close()
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """Auto-cleanup: delete E2E test data after the test session completes."""
+    if not _auth_token:
+        return
+    headers = {"Authorization": f"Bearer {_auth_token}"}
+    try:
+        # Delete test leads created during this session
+        resp = requests.get(f"{BASE_URL}/api/leads", headers=headers)
+        if resp.status_code == 200:
+            for lead in resp.json():
+                name = (lead.get("first_name") or "")
+                if name.startswith("E2E") or name.startswith("SearchTest"):
+                    requests.delete(f"{BASE_URL}/api/leads/{lead['id']}", headers=headers)
+    except Exception:
+        pass

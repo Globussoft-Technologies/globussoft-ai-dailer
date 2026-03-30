@@ -20,16 +20,17 @@ export default function CrmTab({
             placeholder="🔍 Search Leads by Name or Phone..." 
             value={searchQuery}
             onChange={handleSearch}
+            data-testid="lead-search"
             style={{width: '320px', borderRadius: '30px', paddingLeft: '20px', marginBottom: 0, background: 'rgba(15, 23, 42, 0.6)'}}
           />
         </div>
 
         <div style={{display: 'flex', gap: '10px', marginLeft: '1rem'}}>
-          <button className="btn-primary" onClick={() => setIsModalOpen(true)}>
+          <button data-testid="add-lead-btn" className="btn-primary" onClick={() => setIsModalOpen(true)}>
             + Add Lead
           </button>
           {userRole === 'Admin' && (<>
-            <button className="btn-call" style={{borderColor: '#22c55e', color: '#22c55e', padding: '0 16px', height: '40px', background: 'rgba(34, 197, 94, 0.1)', cursor: 'pointer'}} onClick={() => window.open(`${API_URL}/leads/export`, '_blank')}>
+            <button data-testid="export-csv-btn" className="btn-call" style={{borderColor: '#22c55e', color: '#22c55e', padding: '0 16px', height: '40px', background: 'rgba(34, 197, 94, 0.1)', cursor: 'pointer'}} onClick={() => window.open(`${API_URL}/leads/export`, '_blank')}>
               📥 Export CSV
             </button>
             <button className="btn-call" style={{borderColor: '#3b82f6', color: '#3b82f6', padding: '0 16px', height: '40px', background: 'rgba(59, 130, 246, 0.1)', cursor: 'pointer'}} onClick={() => document.getElementById('csv-import-input').click()}>

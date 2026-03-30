@@ -13,23 +13,23 @@ export default function LeadModals({
             <form onSubmit={handleCreateLead}>
               <div className="form-group">
                 <label>First Name</label>
-                <input name="first_name" className="form-input" required value={formData.first_name} onChange={e => setFormData({...formData, first_name: e.target.value})} placeholder="e.g. John" />
+                <input data-testid="lead-first-name" name="first_name" className="form-input" required value={formData.first_name} onChange={e => setFormData({...formData, first_name: e.target.value})} placeholder="e.g. John" />
               </div>
               <div className="form-group">
                 <label>Last Name <span style={{color: '#64748b', fontSize: '0.8rem'}}>(Optional)</span></label>
-                <input name="last_name" className="form-input" value={formData.last_name} onChange={e => setFormData({...formData, last_name: e.target.value})} placeholder="e.g. Doe" />
+                <input data-testid="lead-last-name" name="last_name" className="form-input" value={formData.last_name} onChange={e => setFormData({...formData, last_name: e.target.value})} placeholder="e.g. Doe" />
               </div>
               <div className="form-group">
                 <label>Phone Number</label>
-                <input name="phone" className="form-input" required type="tel" value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})} placeholder="+917406317771" />
+                <input data-testid="lead-phone" name="phone" className="form-input" required type="tel" value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})} placeholder="+917406317771" />
               </div>
               <div className="form-group">
                 <label>Source</label>
-                <input name="source" className="form-input" value={formData.source || ""} onChange={e => setFormData({...formData, source: e.target.value})} placeholder="Dashboard" />
+                <input data-testid="lead-source" name="source" className="form-input" value={formData.source || ""} onChange={e => setFormData({...formData, source: e.target.value})} placeholder="Dashboard" />
               </div>
               <div style={{display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '2.5rem'}}>
                 <button type="button" className="btn-call" style={{borderColor: 'transparent', color: '#cbd5e1', background: 'transparent'}} onClick={() => setIsModalOpen(false)}>Cancel</button>
-                <button type="submit" className="btn-primary" disabled={loading}>
+                <button data-testid="save-lead-btn" type="submit" className="btn-primary" disabled={loading}>
                   {loading ? 'Saving...' : 'Save Lead'}
                 </button>
               </div>
@@ -61,7 +61,7 @@ export default function LeadModals({
               </div>
               <div style={{display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '2.5rem'}}>
                 <button type="button" className="btn-call" style={{borderColor: 'transparent', color: '#cbd5e1', background: 'transparent'}} onClick={() => setEditModalOpen(false)}>Cancel</button>
-                <button type="submit" className="btn-primary" disabled={loading}>
+                <button data-testid="update-lead-btn" type="submit" className="btn-primary" disabled={loading}>
                   {loading ? 'Saving...' : 'Update Lead'}
                 </button>
               </div>
