@@ -21,14 +21,17 @@ from database import (
     get_conn,
 )
 from tts import synthesize_and_send_audio, _tts_recording_buffers
+import redis_store
 
 # ─── Shared State ────────────────────────────────────────────────────────────
-
+# Non-serializable state stays in-memory (asyncio.Task, WebSocket connections)
 active_tts_tasks = {}
 monitor_connections: dict[str, set[WebSocket]] = {}
-whisper_queues: dict[str, list[str]] = {}
-takeover_active: dict[str, bool] = {}
 twilio_websockets: dict[str, WebSocket] = {}
+
+# Serializable state backed by Redis (falls back to in-memory if Redis unavailable)
+# Access via redis_store.get_pending_call(), redis_store.get_takeover(), etc.
+# Legacy aliases kept for backward-compat in main.py dial functions:
 pending_call_info = {}
 
 # SDK clients (initialized lazily)
@@ -80,7 +83,7 @@ async def handle_media_stream(websocket: WebSocket):
             pass
 
     if not lead_name or lead_name == "Customer":
-        info = pending_call_info.get("latest", {})
+        info = redis_store.get_pending_call("latest")
         lead_name = info.get("name", "Customer")
         interest = info.get("interest", "our platform") if not interest else interest
         lead_phone = info.get("phone", "") if not lead_phone else lead_phone
@@ -91,7 +94,7 @@ async def handle_media_stream(websocket: WebSocket):
     EXOTEL_API_TOKEN = (os.getenv("EXOTEL_API_TOKEN") or "").strip()
     EXOTEL_ACCOUNT_SID = (os.getenv("EXOTEL_ACCOUNT_SID") or "").strip()
 
-    _exotel_call_sid = (pending_call_info.get("latest", {}).get("exotel_call_sid") or "")
+    _exotel_call_sid = (redis_store.get_pending_call("latest").get("exotel_call_sid") or "")
     _call_start_time = time.time()
     stream_sid = None
     is_exotel_stream = False
@@ -210,13 +213,12 @@ async def handle_media_stream(websocket: WebSocket):
                                     await monitor.send_json({"type": "transcript", "role": "user", "text": sentence})
                                 except Exception:
                                     pass
-                            if takeover_active.get(stream_sid, False):
+                            if redis_store.get_takeover(stream_sid):
                                 return
-                            pending = whisper_queues.get(stream_sid, [])
+                            pending = redis_store.pop_all_whispers(stream_sid)
                             if pending:
                                 for whisper in pending:
                                     chat_history.append({"role": "user", "parts": [{"text": f"Manager Whisper: {whisper}. Acknowledge this implicitly in your next response."}]})
-                                pending.clear()
 
                         # RAG via Local FAISS
                         rag_context = ""
@@ -399,8 +401,8 @@ async def handle_media_stream(websocket: WebSocket):
                     stream_sid = f"exotel-{_uuid.uuid4().hex[:12]}"
                     twilio_websockets[stream_sid] = websocket
                     monitor_connections[stream_sid] = set()
-                    whisper_queues[stream_sid] = []
-                    takeover_active[stream_sid] = False
+                    redis_store.delete_whispers(stream_sid)
+                    redis_store.set_takeover(stream_sid, False)
                     ws_logger.info(f"[WS] Exotel binary stream started, sid={stream_sid}")
                     call_logger.call_event(stream_sid, "WS_CONNECTED", f"name={lead_name}, phone={lead_phone}")
                     _tts_recording_buffers[stream_sid] = []
@@ -456,8 +458,8 @@ async def handle_media_stream(websocket: WebSocket):
                     
                     # [RACE CONDITION FIX] Map strict CallSid from Exotel payload
                     call_sid = data.get("start", {}).get("callSid") or data.get("call_sid") or data.get("CallSid")
-                    if call_sid and call_sid in pending_call_info:
-                        info = pending_call_info[call_sid]
+                    info = redis_store.get_pending_call(call_sid) if call_sid else {}
+                    if info:
                         true_name = info.get("name", "Customer")
                         old_name = lead_name
                         lead_name = true_name
@@ -468,8 +470,8 @@ async def handle_media_stream(websocket: WebSocket):
 
                     twilio_websockets[stream_sid] = websocket
                     monitor_connections[stream_sid] = set()
-                    whisper_queues[stream_sid] = []
-                    takeover_active[stream_sid] = False
+                    redis_store.delete_whispers(stream_sid)
+                    redis_store.set_takeover(stream_sid, False)
                     _tts_recording_buffers[stream_sid] = []
 
                     if not greeting_sent:
@@ -499,8 +501,8 @@ async def handle_media_stream(websocket: WebSocket):
                         stream_sid = f"exotel-{_uuid.uuid4().hex[:12]}"
                         twilio_websockets[stream_sid] = websocket
                         monitor_connections[stream_sid] = set()
-                        whisper_queues[stream_sid] = []
-                        takeover_active[stream_sid] = False
+                        redis_store.delete_whispers(stream_sid)
+                        redis_store.set_takeover(stream_sid, False)
                         ws_logger.info(f"Exotel text stream started, sid={stream_sid}")
                     _tts_recording_buffers.setdefault(stream_sid, [])
                     if not greeting_sent:
@@ -638,6 +640,8 @@ async def handle_media_stream(websocket: WebSocket):
                     ws_logger.error(f"[TRANSCRIPT] Error saving: {_te}\n{traceback.format_exc()}")
 
         # Cleanup
+        if stream_sid:
+            redis_store.cleanup_call(stream_sid)
         if stream_sid and stream_sid in _tts_recording_buffers:
             del _tts_recording_buffers[stream_sid]
         if stream_sid and stream_sid in twilio_websockets:
@@ -743,13 +747,12 @@ async def monitor_call(websocket: WebSocket, stream_sid: str):
         while True:
             data = await websocket.receive_json()
             if data.get("action") == "whisper":
-                q = whisper_queues.setdefault(stream_sid, [])
-                q.append(data.get("text", ""))
+                redis_store.push_whisper(stream_sid, data.get("text", ""))
             elif data.get("action") == "takeover":
-                takeover_active[stream_sid] = True
+                redis_store.set_takeover(stream_sid, True)
                 if stream_sid in active_tts_tasks and not active_tts_tasks[stream_sid].done():
                     active_tts_tasks[stream_sid].cancel()
-            elif data.get("action") == "audio_chunk" and takeover_active.get(stream_sid, False):
+            elif data.get("action") == "audio_chunk" and redis_store.get_takeover(stream_sid):
                 target_ws = twilio_websockets.get(stream_sid)
                 if target_ws:
                     await target_ws.send_text(json.dumps({

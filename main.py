@@ -51,9 +51,9 @@ from routes import api_router, mobile_api, LeadCreate, PunchCreate, LeadStatusUp
 from live_logs import live_logs_router
 from ws_handler import (
     handle_media_stream, sandbox_stream, monitor_call,
-    pending_call_info, active_tts_tasks, monitor_connections,
-    whisper_queues, takeover_active, twilio_websockets,
+    active_tts_tasks, monitor_connections, twilio_websockets,
 )
+import redis_store
 
 app.include_router(auth_router)
 app.include_router(api_router)
@@ -134,12 +134,12 @@ last_dial_result = {}
 async def initiate_call(lead: dict):
     provider = lead.get("provider", "twilio")
     phone_clean = lead.get("phone_number", "").lstrip("+")
-    pending_call_info["latest"] = {
+    redis_store.set_pending_call("latest", {
         "name": lead.get("name", "Customer"),
         "interest": lead.get("interest", "our platform"),
         "phone": phone_clean,
         "lead_id": lead.get("lead_id")
-    }
+    })
     if provider == "twilio":
         await dial_twilio(lead)
     elif provider == "exotel":
@@ -187,8 +187,10 @@ async def dial_exotel(lead: dict):
             dial_json = resp.json()
             exotel_sid = dial_json.get("Call", {}).get("Sid", "")
             if exotel_sid:
-                pending_call_info["latest"]["exotel_call_sid"] = exotel_sid
-                pending_call_info[exotel_sid] = pending_call_info["latest"]
+                latest = redis_store.get_pending_call("latest")
+                latest["exotel_call_sid"] = exotel_sid
+                redis_store.set_pending_call("latest", latest)
+                redis_store.set_pending_call(exotel_sid, latest)
                 logger.info(f"[DIAL] Stored Exotel Call SID mapped: {exotel_sid}")
         except Exception:
             pass
