@@ -151,12 +151,12 @@ async def api_import_csv(current_user: dict = Depends(get_current_user), file: U
     imported = 0
     errors = []
     for i, row in enumerate(reader, start=2):
-        first_name = row.get("first_name") or row.get("name") or row.get("First Name") or ""
-        last_name = row.get("last_name") or row.get("Last Name") or ""
-        phone = row.get("phone") or row.get("phone_number") or row.get("Phone") or row.get("Mobile") or ""
-        source = row.get("source") or row.get("Source") or "CSV Import"
+        r = {k.strip().lower(): (v.strip() if v else "") for k, v in row.items() if k}
+        first_name = r.get("first_name") or r.get("first name") or r.get("name") or r.get("lead name") or r.get("contact") or ""
+        last_name = r.get("last_name") or r.get("last name") or ""
+        phone = r.get("phone") or r.get("phone_number") or r.get("phone number") or r.get("mobile") or r.get("contact number") or ""
+        source = r.get("source") or r.get("lead source") or r.get("channel") or "CSV Import"
         if not phone:
-            errors.append(f"Row {i}: missing phone")
             continue
         if not first_name:
             errors.append(f"Row {i}: missing name")
@@ -647,13 +647,14 @@ async def api_campaign_import_csv(campaign_id: int, current_user: dict = Depends
     errors = []
     lead_ids = []
     for i, row in enumerate(reader, start=2):
-        first_name = row.get("first_name") or row.get("name") or row.get("First Name") or ""
-        last_name = row.get("last_name") or row.get("Last Name") or ""
-        phone = row.get("phone") or row.get("phone_number") or row.get("Phone") or row.get("Mobile") or ""
-        source = row.get("source") or row.get("Source") or "Campaign Import"
+        # Normalize keys: strip whitespace, lowercase for matching
+        r = {k.strip().lower(): (v.strip() if v else "") for k, v in row.items() if k}
+        first_name = r.get("first_name") or r.get("first name") or r.get("name") or r.get("lead name") or r.get("contact") or ""
+        last_name = r.get("last_name") or r.get("last name") or ""
+        phone = r.get("phone") or r.get("phone_number") or r.get("phone number") or r.get("mobile") or r.get("contact number") or ""
+        source = r.get("source") or r.get("lead source") or r.get("channel") or "Campaign Import"
         if not phone:
-            errors.append(f"Row {i}: missing phone")
-            continue
+            continue  # Skip empty rows silently
         if not first_name:
             errors.append(f"Row {i}: missing name")
             continue
