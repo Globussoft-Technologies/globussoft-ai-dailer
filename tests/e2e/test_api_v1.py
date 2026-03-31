@@ -30,8 +30,7 @@ def test_lead_lifecycle(api_client):
     create_res = api_client.post("/api/leads", json=payload)
     
     # If it's already created due to earlier failure, delete and try again
-    if create_res.status_code == 400 and "exists" in create_res.text:
-        # We need a manual teardown routine to clean dirty db runs
+    if create_res.status_code != 200 or "error" in (create_res.json().get("status", "")):
         all_leads = api_client.get("/api/leads").json()
         for ld in all_leads:
             if ld.get("phone") == "+919999999000":
