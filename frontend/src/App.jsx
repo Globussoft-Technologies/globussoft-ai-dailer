@@ -585,6 +585,12 @@ export default function App() {
       setWebCallActive(null);
       return;
     }
+    // Fetch campaign voice settings before starting call
+    let campVoice = {};
+    try {
+      const vRes = await apiFetch(`${API_URL}/campaigns/${campaignId}/voice-settings`);
+      campVoice = await vRes.json();
+    } catch(e) {}
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -605,9 +611,9 @@ export default function App() {
         phone: lead.phone || '',
         interest: lead.interest || (orgProducts.length > 0 ? orgProducts[0].name : 'our platform'),
         lead_id: String(lead.id || ''),
-        tts_provider: activeVoiceProvider,
-        voice: activeVoiceId,
-        tts_language: activeLanguage,
+        tts_provider: campVoice.tts_provider || activeVoiceProvider,
+        voice: campVoice.tts_voice_id || activeVoiceId,
+        tts_language: campVoice.tts_language || activeLanguage,
         campaign_id: String(campaignId),
       }).toString();
 
