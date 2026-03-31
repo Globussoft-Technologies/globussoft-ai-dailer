@@ -294,7 +294,7 @@ export default function CampaignsTab({
             <button className="btn-primary" style={{background: 'linear-gradient(135deg, #22c55e, #16a34a)', fontSize: '0.85rem', padding: '8px 16px'}}
               onClick={async () => {
                 const newCount = campaignLeads.filter(l => (l.status || '').toLowerCase() === 'new').length;
-                if (!window.confirm(`Dial ALL ${newCount} new leads? (45s gap between calls)`)) return;
+                if (!window.confirm(`Dial ALL ${newCount} new leads? (30s gap between calls)`)) return;
                 try {
                   const res = await apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/dial-all`, { method: 'POST' });
                   const data = await res.json();
