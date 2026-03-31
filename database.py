@@ -174,6 +174,8 @@ def init_db():
             website_url TEXT,
             scraped_info LONGTEXT,
             manual_notes LONGTEXT,
+            agent_persona LONGTEXT,
+            call_flow_instructions LONGTEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (org_id) REFERENCES organizations (id) ON DELETE CASCADE
         )
@@ -846,12 +848,13 @@ def save_campaign_voice_settings(campaign_id: int, tts_provider: str, tts_voice_
     return True
 
 
-def get_product_context_for_campaign(campaign_id: int) -> str:
-    """Get ONLY the specific product's knowledge for a campaign."""
+def get_product_context_for_campaign(campaign_id: int) -> dict:
+    """Get the specific product's knowledge + persona + call flow for a campaign.
+    Returns dict with keys: product_ctx, agent_persona, call_flow_instructions, product_name, org_name"""
     conn = get_conn()
     cursor = conn.cursor()
     cursor.execute('''
-        SELECT p.name, p.scraped_info, p.manual_notes, o.name as org_name
+        SELECT p.name, p.scraped_info, p.manual_notes, p.agent_persona, p.call_flow_instructions, o.name as org_name
         FROM campaigns c
         JOIN products p ON c.product_id = p.id
         JOIN organizations o ON c.org_id = o.id
@@ -860,13 +863,20 @@ def get_product_context_for_campaign(campaign_id: int) -> str:
     row = cursor.fetchone()
     conn.close()
     if not row:
-        return ""
+        return {"product_ctx": "", "agent_persona": "", "call_flow_instructions": "", "product_name": "", "org_name": ""}
     info = f"Product: {row['name']} (by {row['org_name']})"
     if row.get('scraped_info'):
         info += f" — {row['scraped_info']}"
     if row.get('manual_notes'):
         info += f" | Admin notes: {row['manual_notes']}"
-    return "\n\n[PRODUCT KNOWLEDGE - Yeh information use karo jab user product ke baare mein puchhe]:\n" + info
+    product_ctx = "\n\n[PRODUCT KNOWLEDGE - Yeh information use karo jab user product ke baare mein puchhe]:\n" + info
+    return {
+        "product_ctx": product_ctx,
+        "agent_persona": row.get("agent_persona") or "",
+        "call_flow_instructions": row.get("call_flow_instructions") or "",
+        "product_name": row.get("name", ""),
+        "org_name": row.get("org_name", ""),
+    }
 
 
 # --- PRONUNCIATION GUIDE ---
@@ -1035,6 +1045,30 @@ def get_product_knowledge_context(org_id=None) -> str:
             info += f" | Admin notes: {p['manual_notes']}"
         parts.append(info)
     return "\n\n[PRODUCT KNOWLEDGE - Yeh information use karo jab user product ke baare mein puchhe]:\n" + "\n".join(parts)
+
+def get_product_prompt(product_id: int) -> Dict:
+    """Get agent persona + call flow for a specific product."""
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute("SELECT agent_persona, call_flow_instructions FROM products WHERE id = %s", (product_id,))
+    row = cursor.fetchone()
+    conn.close()
+    if not row:
+        return {}
+    return {"agent_persona": row.get("agent_persona") or "", "call_flow_instructions": row.get("call_flow_instructions") or ""}
+
+
+def update_product_prompt(product_id: int, agent_persona: str, call_flow_instructions: str):
+    """Save agent persona + call flow for a product."""
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE products SET agent_persona = %s, call_flow_instructions = %s WHERE id = %s",
+        (agent_persona or None, call_flow_instructions or None, product_id)
+    )
+    conn.close()
+    return True
+
 
 def get_org_custom_prompt(org_id: int) -> str:
     """Get the custom system prompt for an organization, or empty string."""
