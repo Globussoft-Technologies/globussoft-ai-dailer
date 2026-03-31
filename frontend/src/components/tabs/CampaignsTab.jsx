@@ -12,6 +12,8 @@ export default function CampaignsTab({
   const [view, setView] = useState('list'); // 'list' or 'detail'
   const [selectedCampaign, setSelectedCampaign] = useState(null);
   const [campaignLeads, setCampaignLeads] = useState([]);
+  const [callLog, setCallLog] = useState([]);
+  const [detailTab, setDetailTab] = useState('leads'); // 'leads' or 'calllog'
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showAddLeadsModal, setShowAddLeadsModal] = useState(false);
   const [createForm, setCreateForm] = useState({ name: '', product_id: '' });
@@ -30,6 +32,13 @@ export default function CampaignsTab({
       const res = await apiFetch(`${API_URL}/campaigns/${campaignId}/leads`);
       setCampaignLeads(await res.json());
     } catch(e) { setCampaignLeads([]); }
+  };
+
+  const fetchCallLog = async (campaignId) => {
+    try {
+      const res = await apiFetch(`${API_URL}/campaigns/${campaignId}/call-log`);
+      setCallLog(await res.json());
+    } catch(e) { setCallLog([]); }
   };
 
   const fetchCampVoice = async (campaignId) => {
@@ -65,8 +74,10 @@ export default function CampaignsTab({
     setSelectedCampaign(campaign);
     setView('detail');
     fetchCampaignLeads(campaign.id);
+    fetchCallLog(campaign.id);
     fetchCampVoice(campaign.id);
     startEventStream(campaign.id);
+    setDetailTab('leads');
   };
 
   const handleBack = () => {
@@ -340,6 +351,91 @@ export default function CampaignsTab({
           )}
         </div>
 
+        {/* Tab Switcher: Leads | Call Log */}
+        <div style={{display: 'flex', gap: '0', marginBottom: '1rem', borderRadius: '8px', overflow: 'hidden', border: '1px solid rgba(255,255,255,0.1)', width: 'fit-content'}}>
+          <button onClick={() => setDetailTab('leads')}
+            style={{padding: '8px 20px', border: 'none', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem',
+              background: detailTab === 'leads' ? 'rgba(99,102,241,0.2)' : 'transparent',
+              color: detailTab === 'leads' ? '#818cf8' : '#64748b'}}>
+            👥 Leads ({campaignLeads.length})
+          </button>
+          <button onClick={() => { setDetailTab('calllog'); fetchCallLog(selectedCampaign.id); }}
+            style={{padding: '8px 20px', border: 'none', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem',
+              background: detailTab === 'calllog' ? 'rgba(34,197,94,0.2)' : 'transparent',
+              color: detailTab === 'calllog' ? '#22c55e' : '#64748b'}}>
+            📞 Call Log ({callLog.length})
+          </button>
+        </div>
+
+        {/* Call Log Table */}
+        {detailTab === 'calllog' && (
+          <div className="glass-panel" style={{overflowX: 'auto', marginBottom: '1.5rem'}}>
+            <table className="leads-table" style={{width: '100%'}}>
+              <thead>
+                <tr>
+                  <th>Lead</th>
+                  <th>Phone</th>
+                  <th>Source</th>
+                  <th>Time</th>
+                  <th>Outcome</th>
+                  <th>Duration</th>
+                  <th>Recording</th>
+                </tr>
+              </thead>
+              <tbody>
+                {callLog.length === 0 ? (
+                  <tr><td colSpan="7" style={{textAlign: 'center', color: '#64748b', padding: '2rem'}}>No calls made yet.</td></tr>
+                ) : callLog.map(call => {
+                  const outcomeColors = {
+                    'Completed': '#22c55e', 'Connected': '#60a5fa', 'No Answer': '#f59e0b',
+                    'Busy': '#f97316', 'Failed': '#ef4444', 'DND Blocked': '#dc2626'
+                  };
+                  const outcomeBg = {
+                    'Completed': 'rgba(34,197,94,0.1)', 'Connected': 'rgba(96,165,250,0.1)', 'No Answer': 'rgba(245,158,11,0.1)',
+                    'Busy': 'rgba(249,115,22,0.1)', 'Failed': 'rgba(239,68,68,0.1)', 'DND Blocked': 'rgba(220,38,38,0.1)'
+                  };
+                  return (
+                    <tr key={call.id}>
+                      <td style={{fontWeight: 600}}>{call.first_name} {call.last_name || ''}</td>
+                      <td style={{fontFamily: 'SFMono-Regular, Consolas, monospace', color: '#cbd5e1', fontSize: '0.85rem'}}>{call.phone}</td>
+                      <td><span className="badge">{call.source || '-'}</span></td>
+                      <td style={{fontSize: '0.8rem', color: '#94a3b8'}}>{new Date(call.created_at + (call.created_at.endsWith('Z') ? '' : 'Z')).toLocaleString()}</td>
+                      <td>
+                        <span style={{
+                          padding: '3px 10px', borderRadius: '12px', fontSize: '0.75rem', fontWeight: 600,
+                          color: outcomeColors[call.outcome] || '#94a3b8',
+                          background: outcomeBg[call.outcome] || 'rgba(148,163,184,0.1)',
+                          border: `1px solid ${outcomeColors[call.outcome] || '#94a3b8'}30`
+                        }}>
+                          {call.outcome === 'Completed' && '✅ '}
+                          {call.outcome === 'Connected' && '📞 '}
+                          {call.outcome === 'No Answer' && '❌ '}
+                          {call.outcome === 'Busy' && '📵 '}
+                          {call.outcome === 'Failed' && '⚠️ '}
+                          {call.outcome === 'DND Blocked' && '🚫 '}
+                          {call.outcome}
+                        </span>
+                      </td>
+                      <td style={{fontSize: '0.85rem', color: call.call_duration_s > 0 ? '#e2e8f0' : '#64748b'}}>
+                        {call.call_duration_s > 0 ? `${Math.floor(call.call_duration_s / 60)}:${String(Math.floor(call.call_duration_s % 60)).padStart(2, '0')}` : '-'}
+                      </td>
+                      <td>
+                        {call.recording_url ? (
+                          <audio controls style={{height: '28px', width: '150px'}} src={call.recording_url} />
+                        ) : (
+                          <span style={{color: '#64748b', fontSize: '0.8rem'}}>—</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* Leads Table */}
+        {detailTab === 'leads' && (
         <div className="glass-panel" style={{overflowX: 'auto'}}>
           <table className="leads-table" style={{width: '100%'}}>
             <thead>
@@ -419,6 +515,7 @@ export default function CampaignsTab({
             </tbody>
           </table>
         </div>
+        )}
 
         {/* Add Leads Modal */}
         {showAddLeadsModal && (
