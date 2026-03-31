@@ -180,6 +180,31 @@ def init_db():
     ''')
 
     cursor.execute('''
+        CREATE TABLE IF NOT EXISTS campaigns (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            org_id INT NOT NULL,
+            product_id INT NOT NULL,
+            name VARCHAR(255) NOT NULL,
+            status VARCHAR(50) DEFAULT 'active',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (org_id) REFERENCES organizations (id) ON DELETE CASCADE,
+            FOREIGN KEY (product_id) REFERENCES products (id) ON DELETE CASCADE
+        )
+    ''')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS campaign_leads (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            campaign_id INT NOT NULL,
+            lead_id INT NOT NULL,
+            added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE KEY campaign_lead_unique (campaign_id, lead_id),
+            FOREIGN KEY (campaign_id) REFERENCES campaigns (id) ON DELETE CASCADE,
+            FOREIGN KEY (lead_id) REFERENCES leads (id) ON DELETE CASCADE
+        )
+    ''')
+
+    cursor.execute('''
         CREATE TABLE IF NOT EXISTS knowledge_base (
             id INT AUTO_INCREMENT PRIMARY KEY,
             org_id INT NOT NULL,
@@ -616,6 +641,162 @@ def get_user_by_email(email: str) -> Optional[Dict]:
     row = cursor.fetchone()
     conn.close()
     return row
+
+# --- CAMPAIGNS ---
+
+def create_campaign(org_id: int, product_id: int, name: str):
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO campaigns (org_id, product_id, name) VALUES (%s, %s, %s)",
+        (org_id, product_id, name)
+    )
+    last_id = cursor.lastrowid
+    conn.close()
+    return last_id
+
+
+def get_campaigns_by_org(org_id: int) -> List[Dict]:
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT c.*, p.name as product_name
+        FROM campaigns c
+        JOIN products p ON c.product_id = p.id
+        WHERE c.org_id = %s
+        ORDER BY c.created_at DESC
+    ''', (org_id,))
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+
+def get_campaign_by_id(campaign_id: int) -> Dict:
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT c.*, p.name as product_name
+        FROM campaigns c
+        JOIN products p ON c.product_id = p.id
+        WHERE c.id = %s
+    ''', (campaign_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return row
+
+
+def update_campaign(campaign_id: int, name: str = None, status: str = None):
+    conn = get_conn()
+    cursor = conn.cursor()
+    if name:
+        cursor.execute("UPDATE campaigns SET name = %s WHERE id = %s", (name, campaign_id))
+    if status:
+        cursor.execute("UPDATE campaigns SET status = %s WHERE id = %s", (status, campaign_id))
+    conn.close()
+    return True
+
+
+def delete_campaign(campaign_id: int):
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM campaigns WHERE id = %s", (campaign_id,))
+    affected = cursor.rowcount
+    conn.close()
+    return affected > 0
+
+
+def add_leads_to_campaign(campaign_id: int, lead_ids: List[int]):
+    conn = get_conn()
+    cursor = conn.cursor()
+    added = 0
+    for lid in lead_ids:
+        try:
+            cursor.execute(
+                "INSERT IGNORE INTO campaign_leads (campaign_id, lead_id) VALUES (%s, %s)",
+                (campaign_id, lid)
+            )
+            added += cursor.rowcount
+        except Exception:
+            pass
+    conn.close()
+    return added
+
+
+def remove_lead_from_campaign(campaign_id: int, lead_id: int):
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute(
+        "DELETE FROM campaign_leads WHERE campaign_id = %s AND lead_id = %s",
+        (campaign_id, lead_id)
+    )
+    affected = cursor.rowcount
+    conn.close()
+    return affected > 0
+
+
+def get_campaign_leads(campaign_id: int) -> List[Dict]:
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT l.* FROM leads l
+        JOIN campaign_leads cl ON l.id = cl.lead_id
+        WHERE cl.campaign_id = %s
+        ORDER BY l.id DESC
+    ''', (campaign_id,))
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+
+def get_campaign_stats(campaign_id: int) -> Dict:
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) as cnt FROM campaign_leads WHERE campaign_id = %s", (campaign_id,))
+    total = cursor.fetchone()['cnt']
+    cursor.execute('''
+        SELECT COUNT(*) as cnt FROM leads l
+        JOIN campaign_leads cl ON l.id = cl.lead_id
+        WHERE cl.campaign_id = %s AND l.status NOT IN ('new')
+    ''', (campaign_id,))
+    called = cursor.fetchone()['cnt']
+    cursor.execute('''
+        SELECT COUNT(*) as cnt FROM leads l
+        JOIN campaign_leads cl ON l.id = cl.lead_id
+        WHERE cl.campaign_id = %s AND l.status IN ('Warm', 'Summarized', 'Closed')
+    ''', (campaign_id,))
+    qualified = cursor.fetchone()['cnt']
+    cursor.execute('''
+        SELECT COUNT(*) as cnt FROM leads l
+        JOIN campaign_leads cl ON l.id = cl.lead_id
+        WHERE cl.campaign_id = %s AND l.status = 'Closed'
+    ''', (campaign_id,))
+    appointments = cursor.fetchone()['cnt']
+    conn.close()
+    return {"total": total, "called": called, "qualified": qualified, "appointments": appointments}
+
+
+def get_product_context_for_campaign(campaign_id: int) -> str:
+    """Get ONLY the specific product's knowledge for a campaign."""
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT p.name, p.scraped_info, p.manual_notes, o.name as org_name
+        FROM campaigns c
+        JOIN products p ON c.product_id = p.id
+        JOIN organizations o ON c.org_id = o.id
+        WHERE c.id = %s
+    ''', (campaign_id,))
+    row = cursor.fetchone()
+    conn.close()
+    if not row:
+        return ""
+    info = f"Product: {row['name']} (by {row['org_name']})"
+    if row.get('scraped_info'):
+        info += f" — {row['scraped_info']}"
+    if row.get('manual_notes'):
+        info += f" | Admin notes: {row['manual_notes']}"
+    return "\n\n[PRODUCT KNOWLEDGE - Yeh information use karo jab user product ke baare mein puchhe]:\n" + info
+
 
 # --- PRONUNCIATION GUIDE ---
 
