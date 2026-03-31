@@ -335,8 +335,13 @@ export default function CampaignsTab({
                       </button>
                       <button className="btn-call"
                         onClick={() => handleViewTranscripts(lead)}
-                        style={{fontSize: '0.75rem', padding: '4px 10px', cursor: 'pointer', background: 'rgba(99,102,241,0.15)', color: '#818cf8', borderColor: 'rgba(99,102,241,0.3)'}}>
-                        📋 Transcript
+                        style={{fontSize: '0.75rem', padding: '4px 10px', cursor: 'pointer',
+                          background: lead.transcript_count > 0 ? 'rgba(34,197,94,0.15)' : 'rgba(99,102,241,0.08)',
+                          color: lead.transcript_count > 0 ? '#22c55e' : '#64748b',
+                          borderColor: lead.transcript_count > 0 ? 'rgba(34,197,94,0.3)' : 'rgba(99,102,241,0.15)',
+                          fontWeight: lead.transcript_count > 0 ? 600 : 400}}>
+                        {lead.transcript_count > 0 ? `📋 ${lead.transcript_count} Transcript${lead.transcript_count > 1 ? 's' : ''}` : '📋 No Calls'}
+                        {lead.recording_count > 0 && ' 🔊'}
                       </button>
                       <button className="btn-call"
                         onClick={() => handleNote(lead)}
