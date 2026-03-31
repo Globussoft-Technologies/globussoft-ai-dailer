@@ -189,6 +189,7 @@ def init_db():
             tts_provider VARCHAR(50) DEFAULT NULL,
             tts_voice_id VARCHAR(255) DEFAULT NULL,
             tts_language VARCHAR(10) DEFAULT NULL,
+            lead_source VARCHAR(100) DEFAULT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (org_id) REFERENCES organizations (id) ON DELETE CASCADE,
             FOREIGN KEY (product_id) REFERENCES products (id) ON DELETE CASCADE
@@ -641,12 +642,12 @@ def get_user_by_email(email: str) -> Optional[Dict]:
 
 # --- CAMPAIGNS ---
 
-def create_campaign(org_id: int, product_id: int, name: str):
+def create_campaign(org_id: int, product_id: int, name: str, lead_source: str = None):
     conn = get_conn()
     cursor = conn.cursor()
     cursor.execute(
-        "INSERT INTO campaigns (org_id, product_id, name) VALUES (%s, %s, %s)",
-        (org_id, product_id, name)
+        "INSERT INTO campaigns (org_id, product_id, name, lead_source) VALUES (%s, %s, %s, %s)",
+        (org_id, product_id, name, lead_source)
     )
     last_id = cursor.lastrowid
     conn.close()

@@ -222,16 +222,25 @@ async def handle_media_stream(websocket: WebSocket):
     # Use only first name to address the lead
     _lead_first = lead_name.split()[0] if lead_name.strip() else "Customer"
 
-    # Detect lead source for contextual greeting
+    # Detect lead source for contextual greeting — campaign source overrides lead source
     _lead_source = ""
     try:
-        _src_conn = get_conn()
-        _src_cur = _src_conn.cursor()
-        _src_cur.execute("SELECT source FROM leads WHERE id = %s", (_call_lead_id,))
-        _src_row = _src_cur.fetchone()
-        if _src_row:
-            _lead_source = (_src_row.get('source') or "").strip().lower()
-        _src_conn.close()
+        if _campaign_id:
+            _src_conn = get_conn()
+            _src_cur = _src_conn.cursor()
+            _src_cur.execute("SELECT lead_source FROM campaigns WHERE id = %s", (_campaign_id,))
+            _src_row = _src_cur.fetchone()
+            if _src_row and _src_row.get('lead_source'):
+                _lead_source = _src_row['lead_source'].strip().lower()
+            _src_conn.close()
+        if not _lead_source:
+            _src_conn = get_conn()
+            _src_cur = _src_conn.cursor()
+            _src_cur.execute("SELECT source FROM leads WHERE id = %s", (_call_lead_id,))
+            _src_row = _src_cur.fetchone()
+            if _src_row:
+                _lead_source = (_src_row.get('source') or "").strip().lower()
+            _src_conn.close()
     except Exception:
         pass
 

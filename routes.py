@@ -64,6 +64,7 @@ class DocumentCreate(BaseModel):
 class CampaignCreate(BaseModel):
     name: str
     product_id: int
+    lead_source: Optional[str] = None
 
 class CampaignUpdate(BaseModel):
     name: Optional[str] = None
@@ -586,7 +587,7 @@ def api_get_campaigns(current_user: dict = Depends(get_current_user)):
 @api_router.post("/api/campaigns")
 def api_create_campaign(data: CampaignCreate, current_user: dict = Depends(get_current_user)):
     org_id = current_user.get("org_id")
-    campaign_id = create_campaign(org_id, data.product_id, data.name)
+    campaign_id = create_campaign(org_id, data.product_id, data.name, data.lead_source)
     return {"status": "success", "id": campaign_id}
 
 @api_router.get("/api/campaigns/{campaign_id}")

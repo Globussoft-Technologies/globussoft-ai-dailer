@@ -16,7 +16,7 @@ export default function CampaignsTab({
   const [detailTab, setDetailTab] = useState('leads'); // 'leads' or 'calllog'
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showAddLeadsModal, setShowAddLeadsModal] = useState(false);
-  const [createForm, setCreateForm] = useState({ name: '', product_id: '' });
+  const [createForm, setCreateForm] = useState({ name: '', product_id: '', lead_source: '' });
   const [selectedLeadIds, setSelectedLeadIds] = useState([]);
   const [loading, setLoading] = useState(false);
   const [showCsvImportModal, setShowCsvImportModal] = useState(false);
@@ -114,10 +114,11 @@ export default function CampaignsTab({
         body: JSON.stringify({
           name: createForm.name.trim(),
           product_id: createForm.product_id || null,
+          lead_source: createForm.lead_source || null,
           org_id: selectedOrg?.id || null
         })
       });
-      setCreateForm({ name: '', product_id: '' });
+      setCreateForm({ name: '', product_id: '', lead_source: '' });
       setShowCreateModal(false);
       fetchCampaigns();
     } catch(e) { console.error(e); }
@@ -654,6 +655,21 @@ export default function CampaignsTab({
                   style={{width: '100%'}}>
                   <option value="">-- Select Product --</option>
                   {orgProducts.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+              </div>
+              <div style={{marginBottom: '1.5rem'}}>
+                <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>Lead Source (where did these leads come from?)</label>
+                <select className="form-input" value={createForm.lead_source}
+                  onChange={e => setCreateForm({...createForm, lead_source: e.target.value})}
+                  style={{width: '100%'}}>
+                  <option value="">-- Select Source --</option>
+                  <option value="facebook">Facebook / Meta Ads</option>
+                  <option value="google">Google Ads</option>
+                  <option value="instagram">Instagram</option>
+                  <option value="linkedin">LinkedIn</option>
+                  <option value="website">Website Form</option>
+                  <option value="referral">Referral</option>
+                  <option value="cold">Cold Outreach</option>
                 </select>
               </div>
               <div style={{display: 'flex', gap: '10px', justifyContent: 'flex-end'}}>
