@@ -15,6 +15,8 @@ export default function CampaignsTab({
   const [createForm, setCreateForm] = useState({ name: '', product_id: '' });
   const [selectedLeadIds, setSelectedLeadIds] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [showCsvImportModal, setShowCsvImportModal] = useState(false);
+  const [csvFile, setCsvFile] = useState(null);
 
   useEffect(() => { fetchCampaigns(); }, []);
 
@@ -142,12 +144,29 @@ export default function CampaignsTab({
     return p ? p.name : '';
   };
 
-  const getCampaignStats = (campaign) => ({
-    total: campaign.lead_count || 0,
-    called: campaign.called_count || 0,
-    qualified: campaign.qualified_count || 0,
-    booked: campaign.booked_count || 0
-  });
+  const getCampaignStats = (campaign) => {
+    const s = campaign.stats || {};
+    return { total: s.total || 0, called: s.called || 0, qualified: s.qualified || 0, booked: s.appointments || 0 };
+  };
+
+  const handleCsvImport = async () => {
+    if (!csvFile || !selectedCampaign) return;
+    setLoading(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', csvFile);
+      const res = await apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/import-csv`, {
+        method: 'POST', body: formData
+      });
+      const data = await res.json();
+      alert(`Imported ${data.imported} leads, ${data.added_to_campaign} added to campaign.${data.errors?.length ? '\nErrors: ' + data.errors.join(', ') : ''}`);
+      setCsvFile(null);
+      setShowCsvImportModal(false);
+      fetchCampaignLeads(selectedCampaign.id);
+      fetchCampaigns();
+    } catch(e) { console.error(e); }
+    setLoading(false);
+  };
 
   // Available leads = org leads not already in this campaign
   const availableLeads = leads.filter(l => !campaignLeads.some(cl => cl.id === l.id));
@@ -179,8 +198,11 @@ export default function CampaignsTab({
           <div className="glass-panel metric-card"><div className="metric-label">Appointments</div><div className="metric-value">{stats.booked}</div></div>
         </div>
 
-        <div style={{display: 'flex', gap: '10px', marginBottom: '1rem'}}>
-          <button className="btn-primary" onClick={() => { setSelectedLeadIds([]); setShowAddLeadsModal(true); }}>+ Add Leads</button>
+        <div style={{display: 'flex', gap: '10px', marginBottom: '1rem', flexWrap: 'wrap'}}>
+          <button className="btn-primary" onClick={() => { setSelectedLeadIds([]); setShowAddLeadsModal(true); }}>+ Add from CRM</button>
+          <button className="btn-primary" style={{background: 'linear-gradient(135deg, #22d3ee, #06b6d4)'}}
+            onClick={() => { setCsvFile(null); setShowCsvImportModal(true); }}>📤 Import CSV</button>
+          <a href={`${API_URL}/leads/sample-csv`} download style={{color: '#94a3b8', fontSize: '0.8rem', textDecoration: 'underline', alignSelf: 'center'}}>📋 Sample CSV</a>
         </div>
 
         <div className="glass-panel" style={{overflowX: 'auto'}}>
@@ -264,6 +286,30 @@ export default function CampaignsTab({
                 </button>
                 <button className="btn-primary" onClick={handleAddLeads} disabled={loading || selectedLeadIds.length === 0}>
                   {loading ? 'Adding...' : `Add Selected (${selectedLeadIds.length})`}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* CSV Import Modal */}
+        {showCsvImportModal && (
+          <div className="modal-overlay" onClick={() => setShowCsvImportModal(false)}>
+            <div className="glass-panel" onClick={e => e.stopPropagation()}
+              style={{maxWidth: '450px', width: '90%'}}>
+              <h3 style={{marginTop: 0, color: '#e2e8f0'}}>📤 Import Leads from CSV</h3>
+              <p style={{color: '#94a3b8', fontSize: '0.85rem', marginBottom: '1rem'}}>
+                Upload a CSV with columns: first_name, last_name, phone, source. Leads will be created and added to this campaign.
+              </p>
+              <input type="file" accept=".csv" onChange={e => setCsvFile(e.target.files[0])}
+                style={{marginBottom: '1rem', color: '#e2e8f0', fontSize: '0.85rem'}} />
+              <div style={{display: 'flex', gap: '10px', justifyContent: 'flex-end'}}>
+                <button onClick={() => setShowCsvImportModal(false)}
+                  style={{background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: '#94a3b8', padding: '8px 16px', borderRadius: '8px', cursor: 'pointer'}}>
+                  Cancel
+                </button>
+                <button className="btn-primary" onClick={handleCsvImport} disabled={loading || !csvFile}>
+                  {loading ? 'Importing...' : 'Import & Add to Campaign'}
                 </button>
               </div>
             </div>

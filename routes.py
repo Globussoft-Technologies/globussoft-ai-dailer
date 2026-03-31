@@ -575,7 +575,11 @@ def remove_pronunciation(pronunciation_id: int, current_user: dict = Depends(get
 
 @api_router.get("/api/campaigns")
 def api_get_campaigns(current_user: dict = Depends(get_current_user)):
-    return get_campaigns_by_org(current_user.get("org_id"))
+    campaigns = get_campaigns_by_org(current_user.get("org_id"))
+    # Include stats for each campaign
+    for c in campaigns:
+        c["stats"] = get_campaign_stats(c["id"])
+    return campaigns
 
 @api_router.post("/api/campaigns")
 def api_create_campaign(data: CampaignCreate, current_user: dict = Depends(get_current_user)):
@@ -618,6 +622,52 @@ def api_remove_campaign_lead(campaign_id: int, lead_id: int, current_user: dict 
 @api_router.get("/api/campaigns/{campaign_id}/stats")
 def api_get_campaign_stats(campaign_id: int, current_user: dict = Depends(get_current_user)):
     return get_campaign_stats(campaign_id)
+
+@api_router.post("/api/campaigns/{campaign_id}/import-csv")
+async def api_campaign_import_csv(campaign_id: int, current_user: dict = Depends(get_current_user), file: UploadFile = File(...)):
+    """Import leads from CSV and add them directly to a campaign."""
+    import logging
+    _il = logging.getLogger("uvicorn.error")
+    org_id = current_user.get("org_id")
+    contents = await file.read()
+    text = contents.decode("utf-8-sig")
+    reader = csv.DictReader(io.StringIO(text))
+    imported = 0
+    errors = []
+    lead_ids = []
+    for i, row in enumerate(reader, start=2):
+        first_name = row.get("first_name") or row.get("name") or row.get("First Name") or ""
+        last_name = row.get("last_name") or row.get("Last Name") or ""
+        phone = row.get("phone") or row.get("phone_number") or row.get("Phone") or row.get("Mobile") or ""
+        source = row.get("source") or row.get("Source") or "Campaign Import"
+        if not phone:
+            errors.append(f"Row {i}: missing phone")
+            continue
+        if not first_name:
+            errors.append(f"Row {i}: missing name")
+            continue
+        try:
+            lead_id = create_lead({"first_name": first_name.strip(), "last_name": last_name.strip(),
+                                   "phone": phone.strip(), "source": source.strip()}, org_id)
+            lead_ids.append(lead_id)
+            imported += 1
+        except Exception as e:
+            # If duplicate, try to find existing lead and add it
+            if "Duplicate" in str(e):
+                from database import get_all_leads
+                existing = [l for l in get_all_leads(org_id) if l.get("phone", "").strip() == phone.strip()]
+                if existing:
+                    lead_ids.append(existing[0]["id"])
+                    imported += 1
+                else:
+                    errors.append(f"Row {i}: {str(e)[:50]}")
+            else:
+                errors.append(f"Row {i}: {str(e)[:50]}")
+    # Add all created/found leads to the campaign
+    if lead_ids:
+        add_leads_to_campaign(campaign_id, lead_ids)
+    _il.info(f"[CAMPAIGN CSV IMPORT] campaign={campaign_id}, imported={imported}, added_to_campaign={len(lead_ids)}, errors={len(errors)}")
+    return {"status": "success", "imported": imported, "added_to_campaign": len(lead_ids), "errors": errors[:10]}
 
 # --- Mobile API ---
 
