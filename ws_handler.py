@@ -93,18 +93,34 @@ async def handle_media_stream(websocket: WebSocket):
             pass
 
     if not lead_name or lead_name == "Customer":
-        info = redis_store.get_pending_call("latest")
+        # Try to look up by phone number first (supports concurrent dialing)
+        info = {}
+        if lead_phone:
+            _phone_clean = lead_phone.lstrip("+").strip()
+            info = redis_store.get_pending_call(f"phone:{_phone_clean}")
+            if not info and len(_phone_clean) > 10:
+                info = redis_store.get_pending_call(f"phone:{_phone_clean[-10:]}")
+        if not info:
+            info = redis_store.get_pending_call("latest")
         lead_name = info.get("name", "Customer")
         interest = info.get("interest", "our platform") if not interest else interest
         lead_phone = info.get("phone", "") if not lead_phone else lead_phone
         if not _call_lead_id:
             _call_lead_id = info.get("lead_id")
+        # Also pick up campaign/voice from phone-matched pending call
+        if not _campaign_id and info.get("campaign_id"):
+            _campaign_id = info["campaign_id"]
 
     EXOTEL_API_KEY = (os.getenv("EXOTEL_API_KEY") or "").strip()
     EXOTEL_API_TOKEN = (os.getenv("EXOTEL_API_TOKEN") or "").strip()
     EXOTEL_ACCOUNT_SID = (os.getenv("EXOTEL_ACCOUNT_SID") or "").strip()
 
-    _exotel_call_sid = (redis_store.get_pending_call("latest").get("exotel_call_sid") or "")
+    _exotel_call_sid = ""
+    if lead_phone:
+        _phone_info = redis_store.get_pending_call(f"phone:{lead_phone.lstrip('+').strip()}")
+        _exotel_call_sid = _phone_info.get("exotel_call_sid", "")
+    if not _exotel_call_sid:
+        _exotel_call_sid = (redis_store.get_pending_call("latest").get("exotel_call_sid") or "")
     _call_start_time = time.time()
     stream_sid = None
     is_exotel_stream = False

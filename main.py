@@ -152,6 +152,11 @@ async def initiate_call(lead: dict):
     if lead.get("tts_language"):
         pending["tts_language"] = lead["tts_language"]
     redis_store.set_pending_call("latest", pending)
+    # Also store by phone number for concurrent dial support
+    redis_store.set_pending_call(f"phone:{phone_clean}", pending)
+    # Store by last 10 digits too (for matching)
+    if len(phone_clean) > 10:
+        redis_store.set_pending_call(f"phone:{phone_clean[-10:]}", pending)
     if provider == "twilio":
         await dial_twilio(lead)
     elif provider == "exotel":
@@ -220,6 +225,10 @@ async def dial_exotel(lead: dict):
                 latest["exotel_call_sid"] = exotel_sid
                 redis_store.set_pending_call("latest", latest)
                 redis_store.set_pending_call(exotel_sid, latest)
+                # Update phone-keyed entry too
+                redis_store.set_pending_call(f"phone:{phone_clean}", latest)
+                if len(phone_clean) > 10:
+                    redis_store.set_pending_call(f"phone:{phone_clean[-10:]}", latest)
                 logger.info(f"[DIAL] Stored Exotel Call SID mapped: {exotel_sid}")
         except Exception:
             pass
@@ -286,7 +295,7 @@ async def api_campaign_redial_failed(campaign_id: int, background_tasks: Backgro
     async def _redial_queue():
         for i, lead in enumerate(failed_leads):
             if i > 0:
-                await asyncio.sleep(30)  # 30s gap between calls to avoid Exotel throttle
+                await asyncio.sleep(45)  # 45s gap between calls — ensures previous call finishes before next dial
             log.info(f"[REDIAL] {i+1}/{len(failed_leads)}: Dialing {lead['first_name']} ({lead['phone']})")
             call_data = {
                 "name": lead["first_name"], "phone_number": lead["phone"],
