@@ -514,13 +514,19 @@ async def process_recording(recording_url: str, call_sid: str, phone: str):
     from database import get_conn
     log = logging.getLogger("uvicorn.error")
 
-    log.error(f"Downloading recording for {call_sid} from {recording_url}")
+    log.info(f"[RECORDING] Downloading for {call_sid} from {recording_url}")
+    creds = f"{EXOTEL_API_KEY}:{EXOTEL_API_TOKEN}"
+    auth_b64 = base64.b64encode(creds.encode()).decode()
     async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
         try:
-            # Exotel recordings typically don't require API auth on direct links, but follow redirects
-            resp = await client.get(recording_url)
+            resp = await client.get(recording_url, headers={"Authorization": f"Basic {auth_b64}"})
             audio_bytes = resp.content
-            
+            log.info(f"[RECORDING] Download: status={resp.status_code}, size={len(audio_bytes)} bytes")
+
+            if resp.status_code != 200 or len(audio_bytes) < 1000:
+                log.warning(f"[RECORDING] Skipping corrupt/empty download: {resp.status_code}, {len(audio_bytes)} bytes")
+                return
+
             # Save file physically
             os.makedirs("/home/empcloud-development/callified-ai/recordings", exist_ok=True)
             mp3_filename = f"call_{call_sid}_{int(time.time() * 1000)}.mp3"
