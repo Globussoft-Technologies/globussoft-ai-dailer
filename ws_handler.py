@@ -49,6 +49,7 @@ async def handle_media_stream(websocket: WebSocket):
     interest = websocket.query_params.get("interest", "") or ""
     lead_phone = websocket.query_params.get("phone", "") or ""
     _call_lead_id = None
+    _campaign_id = None
     _qp_lead_id = websocket.query_params.get("lead_id", "")
     if _qp_lead_id and _qp_lead_id.isdigit():
         _call_lead_id = int(_qp_lead_id)
@@ -108,7 +109,7 @@ async def handle_media_stream(websocket: WebSocket):
         if not _call_lead_id:
             _call_lead_id = info.get("lead_id")
         # Also pick up campaign/voice from phone-matched pending call
-        if not _campaign_id and info.get("campaign_id"):
+        if info.get("campaign_id"):
             _campaign_id = info["campaign_id"]
 
     EXOTEL_API_KEY = (os.getenv("EXOTEL_API_KEY") or "").strip()
