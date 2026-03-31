@@ -197,6 +197,8 @@ async def dial_exotel(lead: dict):
                     call_duration_s=0
                 )
                 update_lead_status(lead_id, "DND Blocked")
+                from database import update_lead_note
+                update_lead_note(lead_id, "⛔ DND Blocked — This number is on TRAI NDNC (Do Not Call) registry. Exotel cannot dial DND numbers without compliance approval. Submit letterhead + CRM screenshot to Exotel to enable DND calling.")
             return
 
         try:
