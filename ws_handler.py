@@ -203,9 +203,13 @@ async def handle_media_stream(websocket: WebSocket):
         except Exception:
             pass
 
+    # Use only first name to address the lead
+    _lead_first = lead_name.split()[0] if lead_name.strip() else "Customer"
+
     dynamic_context = (
         f"तुम {_agent_name} हो। {_agent_gender_hint} तुम {_company_name} कंपनी से बोल रहे हो।\n"
-        f"तुम {lead_name} को कॉल कर रहे हो। इन्होंने {interest} के बारे में वेबसाइट पर फॉर्म भरा था।\n\n"
+        f"तुम {_lead_first} को कॉल कर रहे हो। इन्होंने {interest} के बारे में वेबसाइट पर फॉर्म भरा था।\n"
+        f"- लीड को सिर्फ पहले नाम से बुलाओ: '{_lead_first} जी'। फुल नेम या लास्ट नेम कभी मत बोलो।\n\n"
 
         f"## तुम्हारी पहचान\n"
         f"- तुम्हारा नाम: {_agent_name}\n"
@@ -505,7 +509,7 @@ async def handle_media_stream(websocket: WebSocket):
 
                 if not greeting_sent:
                     greeting_sent = True
-                    greeting_text = f"नमस्ते {lead_name} जी, मैं {_agent_name}, {_company_name} से बोल रहा हूँ। आपने हमारी वेबसाइट पर फॉर्म भरा था क्या?"
+                    greeting_text = f"नमस्ते {_lead_first} जी, मैं {_agent_name}, {_company_name} से बोल रहा हूँ। आपने हमारी वेबसाइट पर फॉर्म भरा था क्या?"
                     chat_history.append({"role": "model", "parts": [{"text": greeting_text}]})
                     ws_logger.info(f"[GREETING] Sending greeting for {lead_name}")
                     call_logger.call_event(stream_sid, "GREETING_SENT", f"to={lead_name}")
@@ -575,7 +579,7 @@ async def handle_media_stream(websocket: WebSocket):
                         ws_logger.info(f"GREETING: Triggering TTS greeting for stream {stream_sid}")
                         active_tts_tasks[stream_sid] = asyncio.create_task(
                             synthesize_and_send_audio(
-                                f"नमस्ते {lead_name} जी, मैं {_agent_name}, {_company_name} से बोल रहा हूँ। आपने हमारी वेबसाइट पर फॉर्म भरा था क्या?",
+                                f"नमस्ते {_lead_first} जी, मैं {_agent_name}, {_company_name} से बोल रहा हूँ। आपने हमारी वेबसाइट पर फॉर्म भरा था क्या?",
                                 stream_sid, websocket, _tts_provider_override, _tts_voice_override, _tts_language_override,
                             )
                         )
@@ -605,7 +609,7 @@ async def handle_media_stream(websocket: WebSocket):
                         greeting_sent = True
                         active_tts_tasks[stream_sid] = asyncio.create_task(
                             synthesize_and_send_audio(
-                                f"नमस्ते {lead_name} जी, मैं {_agent_name}, {_company_name} से बोल रहा हूँ। आपने हमारी वेबसाइट पर फॉर्म भरा था क्या?",
+                                f"नमस्ते {_lead_first} जी, मैं {_agent_name}, {_company_name} से बोल रहा हूँ। आपने हमारी वेबसाइट पर फॉर्म भरा था क्या?",
                                 stream_sid, websocket, _tts_provider_override, _tts_voice_override, _tts_language_override,
                             )
                         )
