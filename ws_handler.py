@@ -668,11 +668,70 @@ async def handle_media_stream(websocket: WebSocket):
                                     await asyncio.sleep(10)
 
                             if not recording_url:
-                                ws_logger.warning(f"[RECORDING] Exotel recording not available after 6 retries for SID: {_exotel_call_sid}")
+                                ws_logger.warning(f"[RECORDING] Exotel recording not available after 6 retries, falling back to server-side recording")
                             else:
                                 ws_logger.warning(f"[RECORDING] Exotel returned {rec_resp.status_code}")
                         except Exception as _re:
-                            ws_logger.error(f"[RECORDING] Error fetching: {_re}")
+                            ws_logger.error(f"[RECORDING] Error fetching from Exotel: {_re}")
+
+                    # Server-side recording fallback — merge mic + TTS PCM into WAV
+                    if not recording_url:
+                        try:
+                            import struct, wave
+                            mic_chunks = _recording_mic_chunks
+                            tts_chunks = _tts_recording_buffers.get(stream_sid, [])
+                            if mic_chunks or tts_chunks:
+                                ws_logger.info(f"[RECORDING] Building server-side WAV: {len(mic_chunks)} mic chunks, {len(tts_chunks)} tts chunks")
+                                # Both are timestamped: (time, pcm_bytes) at 8000Hz 16-bit mono
+                                SAMPLE_RATE = 8000
+                                SAMPLE_WIDTH = 2  # 16-bit
+
+                                # Find time range
+                                all_times = [t for t, _ in mic_chunks] + [t for t, _ in tts_chunks]
+                                if all_times:
+                                    t_start = min(all_times)
+                                    t_end = max(all_times) + 0.5  # small padding
+                                    total_samples = int((t_end - t_start) * SAMPLE_RATE)
+
+                                    # Create stereo buffer: left=user, right=AI
+                                    user_buf = bytearray(total_samples * SAMPLE_WIDTH)
+                                    ai_buf = bytearray(total_samples * SAMPLE_WIDTH)
+
+                                    for ts, pcm in mic_chunks:
+                                        offset = int((ts - t_start) * SAMPLE_RATE) * SAMPLE_WIDTH
+                                        end = offset + len(pcm)
+                                        if end <= len(user_buf):
+                                            user_buf[offset:end] = pcm
+
+                                    for ts, pcm in tts_chunks:
+                                        offset = int((ts - t_start) * SAMPLE_RATE) * SAMPLE_WIDTH
+                                        end = offset + len(pcm)
+                                        if end <= len(ai_buf):
+                                            ai_buf[offset:end] = pcm
+
+                                    # Interleave into stereo (L=user, R=ai)
+                                    stereo = bytearray(total_samples * SAMPLE_WIDTH * 2)
+                                    for i in range(total_samples):
+                                        src = i * SAMPLE_WIDTH
+                                        dst = i * SAMPLE_WIDTH * 2
+                                        stereo[dst:dst+SAMPLE_WIDTH] = user_buf[src:src+SAMPLE_WIDTH]
+                                        stereo[dst+SAMPLE_WIDTH:dst+SAMPLE_WIDTH*2] = ai_buf[src:src+SAMPLE_WIDTH]
+
+                                    _rec_dir = os.path.join(os.path.dirname(__file__), "recordings")
+                                    os.makedirs(_rec_dir, exist_ok=True)
+                                    _rec_fname = f"call_{_call_lead_id}_{int(_call_start_time)}.wav"
+                                    _rec_path = os.path.join(_rec_dir, _rec_fname)
+
+                                    with wave.open(_rec_path, 'wb') as wf:
+                                        wf.setnchannels(2)
+                                        wf.setsampwidth(SAMPLE_WIDTH)
+                                        wf.setframerate(SAMPLE_RATE)
+                                        wf.writeframes(bytes(stereo))
+
+                                    recording_url = f"/api/recordings/{_rec_fname}"
+                                    ws_logger.info(f"[RECORDING] Server-side WAV saved: {_rec_path} ({len(stereo)} bytes, {round(total_samples/SAMPLE_RATE, 1)}s)")
+                        except Exception as _wav_err:
+                            ws_logger.error(f"[RECORDING] Server-side WAV error: {_wav_err}")
 
                     call_duration = round(time.time() - _call_start_time, 1)
                     if transcript_turns:
