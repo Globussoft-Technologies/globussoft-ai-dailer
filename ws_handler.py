@@ -145,8 +145,10 @@ async def handle_media_stream(websocket: WebSocket):
         _pending_info = redis_store.get_pending_call("latest")
         _campaign_id = _pending_info.get("campaign_id")
 
-    # Load product knowledge for system prompt
+    # Load product knowledge + per-product persona/call flow for system prompt
     product_ctx = ""
+    _product_persona = ""
+    _product_call_flow = ""
     try:
         _user_conn = get_conn()
         _user_cursor = _user_conn.cursor()
@@ -156,9 +158,12 @@ async def handle_media_stream(websocket: WebSocket):
         _user_conn.close()
 
         if _campaign_id:
-            # Campaign-specific: load ONLY that campaign's product
+            # Campaign-specific: load ONLY that campaign's product + persona + call flow
             from database import get_product_context_for_campaign
-            product_ctx = get_product_context_for_campaign(_campaign_id)
+            _camp_product = get_product_context_for_campaign(_campaign_id)
+            product_ctx = _camp_product.get("product_ctx", "")
+            _product_persona = _camp_product.get("agent_persona", "")
+            _product_call_flow = _camp_product.get("call_flow_instructions", "")
             if not product_ctx:
                 product_ctx = get_product_knowledge_context(org_id=_call_org_id)
         elif _call_org_id:
@@ -257,48 +262,81 @@ async def handle_media_stream(websocket: WebSocket):
     _platform = _source_map.get(_lead_source, "हमारी वेबसाइट")
     _source_context = f"{_platform} पर हमारा ad देखकर enquiry की थी" if _platform != "हमारी वेबसाइट" else "हमारी वेबसाइट पर फॉर्म भरा था"
 
-    dynamic_context = (
-        f"तुम {_agent_name} हो। {_agent_gender_hint} तुम {_company_name} कंपनी से बोल रहे हो।\n"
-        f"तुम {_lead_first} को कॉल कर रहे हो। इन्होंने {_source_context}।\n"
-        f"- लीड को सिर्फ पहले नाम से बुलाओ: '{_lead_first} जी'। फुल नेम या लास्ट नेम कभी मत बोलो।\n\n"
+    # Build system prompt — use per-product persona if available, else default
+    if _product_persona or _product_call_flow:
+        # Per-product prompt: product has its own persona + call flow
+        dynamic_context = (
+            f"{_product_persona}\n\n" if _product_persona else
+            f"तुम {_agent_name} हो। {_agent_gender_hint} तुम {_company_name} कंपनी से बोल रहे हो।\n"
+            f"तुम {_lead_first} को कॉल कर रहे हो। इन्होंने {_source_context}।\n"
+            f"- लीड को सिर्फ पहले नाम से बुलाओ: '{_lead_first} जी'।\n\n"
+        )
+        # Inject variables into persona (replace {{first_name}}, {{company}}, etc.)
+        dynamic_context = dynamic_context.replace("{{first_name}}", _lead_first)
+        dynamic_context = dynamic_context.replace("{{company}}", _company_name)
+        dynamic_context = dynamic_context.replace("{{agent_name}}", _agent_name)
+        dynamic_context = dynamic_context.replace("{{source_context}}", _source_context)
 
-        f"## तुम्हारी पहचान\n"
-        f"- तुम्हारा नाम: {_agent_name}\n"
-        f"- कंपनी: {_company_name}\n"
-        f"- अगर कोई पूछे 'कहाँ से बोल रहे हो?' या 'कौन सी कंपनी?' तो तुरंत बोलो: 'मैं {_company_name} से {_agent_name} {_bol}।'\n"
-        f"- कंपनी का नाम कभी छुपाओ मत। पहले ही बोल दो।\n\n"
+        if _product_call_flow:
+            dynamic_context += f"\n## कॉल फ्लो\n{_product_call_flow}\n\n"
+            dynamic_context = dynamic_context.replace("{{first_name}}", _lead_first)
 
-        f"## गोल\n"
-        f"सिर्फ एक काम — अपॉइंटमेंट बुक करना। प्रोडक्ट समझाना तुम्हारा काम नहीं है।\n\n"
+        # Always append core rules
+        dynamic_context += (
+            f"## ज़रूरी नियम\n"
+            f"- हर जवाब 1-2 लाइन। फोन कॉल है, छोटा बोलो।\n"
+            f"- एक बार में एक ही सवाल।\n"
+            f"- STT गलत लिख सकता है। मतलब समझो, spelling मत देखो।\n"
+            f"- कोई formatting नहीं — no *, no #, no bullets। सादा टेक्स्ट।\n"
+            f"- तुम {_agent_name} हो, इंसान हो। कभी AI मत बोलो।\n"
+            f"- कॉल खत्म करने के लिए सिर्फ [HANGUP] लिखो।\n"
+            f"{pronunciation_ctx}"
+            f"{product_ctx}"
+        )
+    else:
+        # Default hardcoded prompt (no per-product persona)
+        dynamic_context = (
+            f"तुम {_agent_name} हो। {_agent_gender_hint} तुम {_company_name} कंपनी से बोल रहे हो।\n"
+            f"तुम {_lead_first} को कॉल कर रहे हो। इन्होंने {_source_context}।\n"
+            f"- लीड को सिर्फ पहले नाम से बुलाओ: '{_lead_first} जी'। फुल नेम या लास्ट नेम कभी मत बोलो।\n\n"
 
-        f"## कॉल फ्लो\n"
-        f"1. इंट्रो: 'नमस्ते {_lead_first} जी, मैं {_agent_name}, {_company_name} से {_bol}। आपने {_source_context} क्या?'\n"
-        f"2. अगर हाँ: 'अभी भी इंटरेस्ट है क्या इसमें?'\n"
-        f"3. अगर इंटरेस्ट है: 'अच्छा बढ़िया, तो आप कल या परसों कब फ्री होंगे? हमारे सीनियर आपको कॉल करेंगे।'\n"
-        f"4. टाइम मिलने पर: टाइम रिपीट करो, थैंक यू बोलो।\n"
-        f"5. एंड: 'डन, आपको कॉल आएगा। थैंक यू!' फिर [HANGUP]\n\n"
+            f"## तुम्हारी पहचान\n"
+            f"- तुम्हारा नाम: {_agent_name}\n"
+            f"- कंपनी: {_company_name}\n"
+            f"- अगर कोई पूछे 'कहाँ से बोल रहे हो?' या 'कौन सी कंपनी?' तो तुरंत बोलो: 'मैं {_company_name} से {_agent_name} {_bol}।'\n"
+            f"- कंपनी का नाम कभी छुपाओ मत। पहले ही बोल दो।\n\n"
 
-        f"## अगर फॉर्म नहीं भरा\n"
-        f"'अच्छा सॉरी, शायद गलती से नंबर आ गया। आपका दिन अच्छा हो।' फिर [HANGUP]\n\n"
+            f"## गोल\n"
+            f"सिर्फ एक काम — अपॉइंटमेंट बुक करना। प्रोडक्ट समझाना तुम्हारा काम नहीं है।\n\n"
 
-        f"## अगर इंटरेस्ट नहीं\n"
-        f"'बिल्कुल, कोई बात नहीं। थैंक यू।' फिर [HANGUP]\n\n"
+            f"## कॉल फ्लो\n"
+            f"1. इंट्रो: 'नमस्ते {_lead_first} जी, मैं {_agent_name}, {_company_name} से {_bol}। आपने {_source_context} क्या?'\n"
+            f"2. अगर हाँ: 'अभी भी इंटरेस्ट है क्या इसमें?'\n"
+            f"3. अगर इंटरेस्ट है: 'अच्छा बढ़िया, तो आप कल या परसों कब फ्री होंगे? हमारे सीनियर आपको कॉल करेंगे।'\n"
+            f"4. टाइम मिलने पर: टाइम रिपीट करो, थैंक यू बोलो।\n"
+            f"5. एंड: 'डन, आपको कॉल आएगा। थैंक यू!' फिर [HANGUP]\n\n"
 
-        f"## अगर प्रोडक्ट के बारे में पूछें\n"
-        f"सिर्फ एक लाइन में बताओ, फिर तुरंत अपॉइंटमेंट पर आओ: 'इसे डीटेल में हमारे सीनियर समझाएंगे, आप कब फ्री हैं?'\n\n"
+            f"## अगर फॉर्म नहीं भरा\n"
+            f"'अच्छा सॉरी, शायद गलती से नंबर आ गया। आपका दिन अच्छा हो।' फिर [HANGUP]\n\n"
 
-        f"## ज़रूरी नियम\n"
-        f"- हर जवाब 1-2 लाइन। फोन कॉल है, छोटा बोलो।\n"
-        f"- एक बार में एक ही सवाल। दो चीज़ें एक साथ मत बोलो।\n"
-        f"- सवाल में 'क्या', 'ना', 'है क्या' लगाओ ताकि सवाल जैसा लगे।\n"
-        f"- STT गलत लिख सकता है ('की थी' → 'key thi')। मतलब समझो, spelling मत देखो।\n"
-        f"- कोई formatting नहीं — no *, no #, no bullets। सादा टेक्स्ट।\n"
-        f"- तुम {_agent_name} हो, इंसान हो। कभी AI मत बोलो।\n"
-        f"- जो बोल चुके हो दोबारा मत बोलो।\n"
-        f"- कॉल खत्म करने के लिए सिर्फ [HANGUP] लिखो।\n"
-        f"{pronunciation_ctx}"
-        f"{product_ctx}"
-    )
+            f"## अगर इंटरेस्ट नहीं\n"
+            f"'बिल्कुल, कोई बात नहीं। थैंक यू।' फिर [HANGUP]\n\n"
+
+            f"## अगर प्रोडक्ट के बारे में पूछें\n"
+            f"सिर्फ एक लाइन में बताओ, फिर तुरंत अपॉइंटमेंट पर आओ: 'इसे डीटेल में हमारे सीनियर समझाएंगे, आप कब फ्री हैं?'\n\n"
+
+            f"## ज़रूरी नियम\n"
+            f"- हर जवाब 1-2 लाइन। फोन कॉल है, छोटा बोलो।\n"
+            f"- एक बार में एक ही सवाल। दो चीज़ें एक साथ मत बोलो।\n"
+            f"- सवाल में 'क्या', 'ना', 'है क्या' लगाओ ताकि सवाल जैसा लगे।\n"
+            f"- STT गलत लिख सकता है ('की थी' → 'key thi')। मतलब समझो, spelling मत देखो।\n"
+            f"- कोई formatting नहीं — no *, no #, no bullets। सादा टेक्स्ट।\n"
+            f"- तुम {_agent_name} हो, इंसान हो। कभी AI मत बोलो।\n"
+            f"- जो बोल चुके हो दोबारा मत बोलो।\n"
+            f"- कॉल खत्म करने के लिए सिर्फ [HANGUP] लिखो।\n"
+            f"{pronunciation_ctx}"
+            f"{product_ctx}"
+        )
 
     if not dg_client:
         dg_client = DeepgramClient(os.getenv("DEEPGRAM_API_KEY", "dummy"))
