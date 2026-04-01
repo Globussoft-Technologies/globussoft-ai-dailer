@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { formatDateTime } from '../../utils/dateFormat';
 
 export default function CampaignDetail({
@@ -18,6 +18,46 @@ export default function CampaignDetail({
   handleEditCampaign
 }) {
   const stats = getCampaignStats(selectedCampaign);
+  const [callInsights, setCallInsights] = useState(null);
+  const [callReviews, setCallReviews] = useState([]);
+  const [insightsLoading, setInsightsLoading] = useState(false);
+
+  const fetchInsights = async () => {
+    setInsightsLoading(true);
+    try {
+      const [insightsRes, reviewsRes] = await Promise.all([
+        apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/call-insights`),
+        apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/call-reviews`),
+      ]);
+      setCallInsights(await insightsRes.json());
+      setCallReviews(await reviewsRes.json());
+    } catch (e) { console.error('Failed to fetch insights', e); }
+    setInsightsLoading(false);
+  };
+
+  useEffect(() => {
+    if (detailTab === 'insights') fetchInsights();
+  }, [detailTab, selectedCampaign.id]);
+
+  const scoreColor = (s) => {
+    if (s >= 4) return '#22c55e';
+    if (s >= 3) return '#f59e0b';
+    if (s >= 2) return '#f97316';
+    return '#ef4444';
+  };
+
+  const sentimentColor = (s) => {
+    if (s === 'positive') return '#22c55e';
+    if (s === 'neutral') return '#60a5fa';
+    if (s === 'negative') return '#f97316';
+    if (s === 'annoyed') return '#ef4444';
+    return '#94a3b8';
+  };
+
+  // Build a map of transcript_id -> review for the call log badges
+  const reviewByTranscript = {};
+  callReviews.forEach(r => { reviewByTranscript[r.transcript_id] = r; });
+
   return (
     <div style={{padding: '1rem'}}>
       <button onClick={handleBack}
@@ -219,11 +259,17 @@ export default function CampaignDetail({
             color: detailTab === 'leads' ? '#818cf8' : '#64748b'}}>
           👥 Leads ({campaignLeads.length})
         </button>
-        <button onClick={() => { setDetailTab('calllog'); fetchCallLog(selectedCampaign.id); }}
+        <button onClick={() => { setDetailTab('calllog'); fetchCallLog(selectedCampaign.id); fetchInsights(); }}
           style={{padding: '8px 20px', border: 'none', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem',
             background: detailTab === 'calllog' ? 'rgba(34,197,94,0.2)' : 'transparent',
             color: detailTab === 'calllog' ? '#22c55e' : '#64748b'}}>
           📞 Call Log ({callLog.length})
+        </button>
+        <button onClick={() => setDetailTab('insights')}
+          style={{padding: '8px 20px', border: 'none', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem',
+            background: detailTab === 'insights' ? 'rgba(168,85,247,0.2)' : 'transparent',
+            color: detailTab === 'insights' ? '#a855f7' : '#64748b'}}>
+          📊 Call Insights
         </button>
       </div>
 
@@ -238,14 +284,16 @@ export default function CampaignDetail({
                 <th>Source</th>
                 <th>Time</th>
                 <th>Outcome</th>
+                <th>Quality</th>
                 <th>Duration</th>
                 <th>Recording</th>
               </tr>
             </thead>
             <tbody>
               {callLog.length === 0 ? (
-                <tr><td colSpan="7" style={{textAlign: 'center', color: '#64748b', padding: '2rem'}}>No calls made yet.</td></tr>
+                <tr><td colSpan="8" style={{textAlign: 'center', color: '#64748b', padding: '2rem'}}>No calls made yet.</td></tr>
               ) : callLog.map(call => {
+                const review = reviewByTranscript[call.id];
                 const outcomeColors = {
                   'Completed': '#22c55e', 'Connected': '#60a5fa', 'No Answer': '#f59e0b',
                   'Busy': '#f97316', 'Failed': '#ef4444', 'DND Blocked': '#dc2626'
@@ -276,6 +324,20 @@ export default function CampaignDetail({
                         {call.outcome}
                       </span>
                     </td>
+                    <td>
+                      {review ? (
+                        <span style={{
+                          padding: '2px 8px', borderRadius: '10px', fontSize: '0.75rem', fontWeight: 700,
+                          color: scoreColor(review.quality_score),
+                          background: `${scoreColor(review.quality_score)}18`,
+                          border: `1px solid ${scoreColor(review.quality_score)}40`
+                        }}>
+                          {'★'.repeat(review.quality_score)}{'☆'.repeat(5 - review.quality_score)}
+                        </span>
+                      ) : (
+                        <span style={{color: '#64748b', fontSize: '0.75rem'}}>--</span>
+                      )}
+                    </td>
                     <td style={{fontSize: '0.85rem', color: call.call_duration_s > 0 ? '#e2e8f0' : '#64748b'}}>
                       {call.call_duration_s > 0 ? `${Math.floor(call.call_duration_s / 60)}:${String(Math.floor(call.call_duration_s % 60)).padStart(2, '0')}` : '-'}
                     </td>
@@ -291,6 +353,123 @@ export default function CampaignDetail({
               })}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* Call Insights Tab */}
+      {detailTab === 'insights' && (
+        <div style={{marginBottom: '1.5rem'}}>
+          {insightsLoading ? (
+            <div className="glass-panel" style={{padding: '2rem', textAlign: 'center', color: '#94a3b8'}}>Loading insights...</div>
+          ) : !callInsights || callInsights.total_reviews === 0 ? (
+            <div className="glass-panel" style={{padding: '2rem', textAlign: 'center', color: '#64748b'}}>No call reviews yet. Reviews are generated automatically after each call.</div>
+          ) : (
+            <>
+              {/* Summary Cards */}
+              <div className="metrics-grid" style={{marginBottom: '1.5rem'}}>
+                <div className="glass-panel metric-card">
+                  <div className="metric-label">Avg Quality Score</div>
+                  <div className="metric-value" style={{color: scoreColor(Math.round(callInsights.avg_quality_score))}}>
+                    {callInsights.avg_quality_score}/5
+                  </div>
+                </div>
+                <div className="glass-panel metric-card">
+                  <div className="metric-label">Appointment Rate</div>
+                  <div className="metric-value" style={{color: callInsights.appointment_rate > 30 ? '#22c55e' : '#f59e0b'}}>
+                    {callInsights.appointment_rate}%
+                  </div>
+                </div>
+                <div className="glass-panel metric-card">
+                  <div className="metric-label">Calls Analyzed</div>
+                  <div className="metric-value">{callInsights.total_reviews}</div>
+                </div>
+                <div className="glass-panel metric-card">
+                  <div className="metric-label">Top Sentiment</div>
+                  <div className="metric-value" style={{fontSize: '1.1rem', color: sentimentColor(
+                    Object.entries(callInsights.sentiment_breakdown || {}).sort((a, b) => b[1] - a[1])[0]?.[0]
+                  )}}>
+                    {Object.entries(callInsights.sentiment_breakdown || {}).sort((a, b) => b[1] - a[1])[0]?.[0] || '-'}
+                  </div>
+                </div>
+              </div>
+
+              {/* Improvement Suggestions */}
+              {callInsights.top_improvements && callInsights.top_improvements.length > 0 && (
+                <div className="glass-panel" style={{padding: '16px', marginBottom: '1.5rem'}}>
+                  <div style={{fontSize: '0.85rem', color: '#a855f7', fontWeight: 700, marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.5px'}}>
+                    Prompt Improvement Suggestions
+                  </div>
+                  {callInsights.top_improvements.map((imp, i) => (
+                    <div key={i} style={{padding: '8px 12px', marginBottom: '6px', background: 'rgba(168,85,247,0.06)', borderRadius: '6px', borderLeft: '3px solid #a855f7', fontSize: '0.85rem', color: '#e2e8f0'}}>
+                      {imp.suggestion}
+                      <span style={{color: '#64748b', fontSize: '0.75rem', marginLeft: '8px'}}>({imp.count}x)</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Top Failure Reasons */}
+              {callInsights.top_failure_reasons && callInsights.top_failure_reasons.length > 0 && (
+                <div className="glass-panel" style={{padding: '16px', marginBottom: '1.5rem'}}>
+                  <div style={{fontSize: '0.85rem', color: '#f97316', fontWeight: 700, marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.5px'}}>
+                    Top Failure Reasons
+                  </div>
+                  {callInsights.top_failure_reasons.map((fr, i) => (
+                    <div key={i} style={{padding: '8px 12px', marginBottom: '6px', background: 'rgba(249,115,22,0.06)', borderRadius: '6px', borderLeft: '3px solid #f97316', fontSize: '0.85rem', color: '#e2e8f0'}}>
+                      {fr.reason}
+                      <span style={{color: '#64748b', fontSize: '0.75rem', marginLeft: '8px'}}>({fr.count}x)</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Per-Call Reviews Table */}
+              <div className="glass-panel" style={{overflowX: 'auto'}}>
+                <table className="leads-table" style={{width: '100%'}}>
+                  <thead>
+                    <tr>
+                      <th>Lead</th>
+                      <th>Quality</th>
+                      <th>Appt Booked</th>
+                      <th>Sentiment</th>
+                      <th>What Went Well</th>
+                      <th>What Went Wrong</th>
+                      <th>Failure Reason</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {callReviews.map(r => (
+                      <tr key={r.id}>
+                        <td style={{fontWeight: 600}}>{r.first_name} {r.last_name || ''}</td>
+                        <td>
+                          <span style={{fontWeight: 700, color: scoreColor(r.quality_score), fontSize: '0.9rem'}}>
+                            {'★'.repeat(r.quality_score)}{'☆'.repeat(5 - r.quality_score)}
+                          </span>
+                        </td>
+                        <td>
+                          <span style={{
+                            padding: '2px 10px', borderRadius: '12px', fontSize: '0.75rem', fontWeight: 600,
+                            color: r.appointment_booked ? '#22c55e' : '#f97316',
+                            background: r.appointment_booked ? 'rgba(34,197,94,0.1)' : 'rgba(249,115,22,0.1)',
+                          }}>
+                            {r.appointment_booked ? 'Yes' : 'No'}
+                          </span>
+                        </td>
+                        <td>
+                          <span style={{color: sentimentColor(r.customer_sentiment), fontWeight: 600, fontSize: '0.85rem'}}>
+                            {r.customer_sentiment}
+                          </span>
+                        </td>
+                        <td style={{fontSize: '0.8rem', color: '#94a3b8', maxWidth: '200px'}}>{r.what_went_well || '-'}</td>
+                        <td style={{fontSize: '0.8rem', color: '#f87171', maxWidth: '200px'}}>{r.what_went_wrong || '-'}</td>
+                        <td style={{fontSize: '0.8rem', color: '#94a3b8', maxWidth: '200px'}}>{r.failure_reason || '-'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
         </div>
       )}
 

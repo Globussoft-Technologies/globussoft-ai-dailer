@@ -10,7 +10,7 @@ import time
 import logging
 import httpx
 
-from database import save_call_transcript
+from database import save_call_transcript, save_call_review
 
 
 async def save_call_recording_and_transcript(
@@ -180,10 +180,72 @@ async def save_call_recording_and_transcript(
     # --- Save transcript to DB ---
     call_duration = round(time.time() - _call_start_time, 1)
     if transcript_turns:
-        save_call_transcript(
+        transcript_id = save_call_transcript(
             lead_id=_call_lead_id,
             transcript_json=json.dumps(transcript_turns, ensure_ascii=False),
             recording_url=recording_url,
             call_duration_s=call_duration,
             campaign_id=_campaign_id,
         )
+
+        # --- Background call analysis with Gemini ---
+        if transcript_id and _campaign_id and call_duration > 5:
+            asyncio.ensure_future(_analyze_call_transcript(
+                transcript_id=transcript_id,
+                campaign_id=_campaign_id,
+                lead_id=_call_lead_id,
+                transcript_turns=transcript_turns,
+                logger=ws_logger,
+            ))
+
+
+async def _analyze_call_transcript(transcript_id, campaign_id, lead_id, transcript_turns, logger):
+    """Send transcript to Gemini 2.5 Flash for quality analysis (runs in background)."""
+    try:
+        from google import genai
+
+        transcript_text = "\n".join(
+            f"{t['role']}: {t['text']}" for t in transcript_turns
+        )
+
+        analysis_prompt = f"""You are a sales call quality analyst. Analyze this AI sales call transcript and return a JSON object:
+
+{{
+  "quality_score": 1-5 (1=terrible, 5=perfect),
+  "appointment_booked": true/false,
+  "customer_sentiment": "positive" | "neutral" | "negative" | "annoyed",
+  "failure_reason": "reason the call failed to book appointment, or null if booked",
+  "what_went_well": "1-2 sentences about what the AI did right",
+  "what_went_wrong": "1-2 sentences about mistakes the AI made",
+  "prompt_improvement_suggestion": "specific instruction to add to the AI prompt to fix the issue"
+}}
+
+TRANSCRIPT:
+{transcript_text}
+
+Return ONLY the JSON object, no markdown, no explanation."""
+
+        api_key = (os.getenv("GEMINI_API_KEY") or "").strip()
+        if not api_key:
+            logger.warning("[CALL_ANALYSIS] No GEMINI_API_KEY set, skipping analysis")
+            return
+
+        client = genai.Client(api_key=api_key)
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=analysis_prompt,
+        )
+        text = response.text.strip()
+        # Strip markdown code fences if present
+        if text.startswith("```"):
+            text = text.split("\n", 1)[1] if "\n" in text else text[3:]
+        if text.endswith("```"):
+            text = text[:-3].strip()
+        if text.startswith("json"):
+            text = text[4:].strip()
+
+        analysis = json.loads(text)
+        save_call_review(transcript_id, campaign_id, lead_id, analysis)
+        logger.info(f"[CALL_ANALYSIS] Saved review for transcript {transcript_id}: score={analysis.get('quality_score')}, sentiment={analysis.get('customer_sentiment')}")
+    except Exception as e:
+        logger.error(f"[CALL_ANALYSIS] Failed for transcript {transcript_id}: {e}")

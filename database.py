@@ -254,6 +254,25 @@ def init_db():
     except Exception:
         pass  # Column already exists
 
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS call_reviews (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            transcript_id INT,
+            campaign_id INT,
+            lead_id INT,
+            quality_score INT DEFAULT 0,
+            appointment_booked BOOLEAN DEFAULT FALSE,
+            customer_sentiment VARCHAR(50),
+            failure_reason TEXT,
+            what_went_well TEXT,
+            what_went_wrong TEXT,
+            prompt_improvement_suggestion TEXT,
+            raw_analysis JSON,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (transcript_id) REFERENCES call_transcripts (id) ON DELETE CASCADE
+        )
+    ''')
+
     conn.close()
 
 def get_all_leads(org_id: int) -> List[Dict]:
@@ -1154,3 +1173,57 @@ def delete_knowledge_file(fid: int, org_id: int):
     affected = cursor.rowcount
     conn.close()
     return affected > 0
+
+
+# --- CALL REVIEWS ---
+
+def save_call_review(transcript_id: int, campaign_id: int, lead_id: int, analysis: dict):
+    """Save a Gemini-generated call quality review."""
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT INTO call_reviews (transcript_id, campaign_id, lead_id,
+            quality_score, appointment_booked, customer_sentiment,
+            failure_reason, what_went_well, what_went_wrong,
+            prompt_improvement_suggestion, raw_analysis)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+    ''', (
+        transcript_id, campaign_id, lead_id,
+        analysis.get('quality_score', 0),
+        analysis.get('appointment_booked', False),
+        analysis.get('customer_sentiment', 'neutral'),
+        analysis.get('failure_reason'),
+        analysis.get('what_went_well'),
+        analysis.get('what_went_wrong'),
+        analysis.get('prompt_improvement_suggestion'),
+        json.dumps(analysis, ensure_ascii=False),
+    ))
+    last_id = cursor.lastrowid
+    conn.close()
+    return last_id
+
+
+def get_call_reviews_by_campaign(campaign_id: int) -> List[Dict]:
+    """Get all call reviews for a campaign, joined with lead info."""
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT cr.*, l.first_name, l.last_name, l.phone
+        FROM call_reviews cr
+        LEFT JOIN leads l ON cr.lead_id = l.id
+        WHERE cr.campaign_id = %s
+        ORDER BY cr.created_at DESC
+    ''', (campaign_id,))
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+
+def get_call_review_by_transcript(transcript_id: int) -> Optional[Dict]:
+    """Get the review for a specific transcript."""
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM call_reviews WHERE transcript_id = %s", (transcript_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return row

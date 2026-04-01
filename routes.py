@@ -34,6 +34,7 @@ from database import (
     get_campaign_voice_settings, save_campaign_voice_settings,
     get_campaign_call_log,
     get_product_prompt, update_product_prompt,
+    save_call_review, get_call_reviews_by_campaign, get_call_review_by_transcript,
 )
 import rag
 
@@ -822,6 +823,61 @@ def api_get_campaign_stats(campaign_id: int, current_user: dict = Depends(get_cu
 @api_router.get("/api/campaigns/{campaign_id}/call-log")
 def api_get_campaign_call_log(campaign_id: int, current_user: dict = Depends(get_current_user)):
     return get_campaign_call_log(campaign_id)
+
+@api_router.get("/api/campaigns/{campaign_id}/call-reviews")
+def api_get_campaign_call_reviews(campaign_id: int, current_user: dict = Depends(get_current_user)):
+    return get_call_reviews_by_campaign(campaign_id)
+
+@api_router.get("/api/transcripts/{transcript_id}/review")
+def api_get_transcript_review(transcript_id: int, current_user: dict = Depends(get_current_user)):
+    review = get_call_review_by_transcript(transcript_id)
+    if not review:
+        raise HTTPException(status_code=404, detail="No review found for this transcript")
+    return review
+
+@api_router.get("/api/campaigns/{campaign_id}/call-insights")
+def api_get_campaign_call_insights(campaign_id: int, current_user: dict = Depends(get_current_user)):
+    """Aggregate call reviews into campaign-level insights."""
+    reviews = get_call_reviews_by_campaign(campaign_id)
+    if not reviews:
+        return {"avg_quality_score": 0, "appointment_rate": 0, "total_reviews": 0,
+                "sentiment_breakdown": {}, "top_failure_reasons": [], "top_improvements": []}
+
+    total = len(reviews)
+    avg_score = round(sum(r.get('quality_score', 0) for r in reviews) / total, 1)
+    booked = sum(1 for r in reviews if r.get('appointment_booked'))
+    appointment_rate = round((booked / total) * 100, 1)
+
+    sentiments = {}
+    for r in reviews:
+        s = r.get('customer_sentiment', 'unknown')
+        sentiments[s] = sentiments.get(s, 0) + 1
+
+    # Top failure reasons (deduplicate loosely)
+    failure_reasons = {}
+    for r in reviews:
+        reason = r.get('failure_reason')
+        if reason and reason.lower() not in ('null', 'none', ''):
+            failure_reasons[reason] = failure_reasons.get(reason, 0) + 1
+    top_failures = sorted(failure_reasons.items(), key=lambda x: -x[1])[:5]
+
+    # Top improvement suggestions
+    improvements = {}
+    for r in reviews:
+        sug = r.get('prompt_improvement_suggestion')
+        if sug and sug.lower() not in ('null', 'none', ''):
+            improvements[sug] = improvements.get(sug, 0) + 1
+    top_improvements = sorted(improvements.items(), key=lambda x: -x[1])[:5]
+
+    return {
+        "avg_quality_score": avg_score,
+        "appointment_rate": appointment_rate,
+        "total_reviews": total,
+        "appointments_booked": booked,
+        "sentiment_breakdown": sentiments,
+        "top_failure_reasons": [{"reason": r, "count": c} for r, c in top_failures],
+        "top_improvements": [{"suggestion": s, "count": c} for s, c in top_improvements],
+    }
 
 @api_router.get("/api/campaigns/{campaign_id}/voice-settings")
 def api_get_campaign_voice(campaign_id: int, current_user: dict = Depends(get_current_user)):
