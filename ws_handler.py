@@ -151,6 +151,7 @@ async def handle_media_stream(websocket: WebSocket):
     product_ctx = ""
     _product_persona = ""
     _product_call_flow = ""
+    _product_name = ""
     try:
         _user_conn = get_conn()
         _user_cursor = _user_conn.cursor()
@@ -181,7 +182,6 @@ async def handle_media_stream(websocket: WebSocket):
         product_ctx = get_product_knowledge_context()
 
     # Build call context (voice identity, company name, lead source, system prompt)
-    _product_name = ""
     _ctx = build_call_context(
         lead_name=lead_name,
         lead_phone=lead_phone,
