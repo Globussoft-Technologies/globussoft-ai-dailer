@@ -82,6 +82,11 @@ export default function SettingsTab({
       if (data.status === 'success') {
         updateProductPrompt(productId, 'agent_persona', data.agent_persona);
         updateProductPrompt(productId, 'call_flow_instructions', data.call_flow_instructions);
+        // Auto-save immediately after generation
+        await apiFetch(`${API_URL}/products/${productId}/prompt`, {
+          method: 'PUT', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ agent_persona: data.agent_persona, call_flow_instructions: data.call_flow_instructions })
+        });
       } else {
         alert(data.message || 'Generation failed');
       }

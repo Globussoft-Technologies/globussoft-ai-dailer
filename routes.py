@@ -14,6 +14,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File
 from fastapi.responses import StreamingResponse, JSONResponse, FileResponse
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
+import logging
+logger = logging.getLogger("uvicorn.error")
 from auth import get_current_user
 from database import (
     get_all_leads, get_lead_by_id, create_lead, update_lead, delete_lead,
@@ -337,7 +339,9 @@ def api_create_product(org_id: int, payload: dict, current_user: dict = Depends(
 
 @api_router.put("/api/products/{product_id}")
 def api_update_product(product_id: int, payload: dict, current_user: dict = Depends(get_current_user)):
-    update_product(product_id, **{k: v for k, v in payload.items() if k in ('name', 'website_url', 'scraped_info', 'manual_notes')})
+    fields = {k: v for k, v in payload.items() if k in ('name', 'website_url', 'scraped_info', 'manual_notes')}
+    logger.info(f"[API] UPDATE product {product_id}: fields={list(fields.keys())}, user={current_user.get('email')}")
+    update_product(product_id, **fields)
     return {"status": "ok"}
 
 @api_router.delete("/api/products/{product_id}")
@@ -406,7 +410,10 @@ def api_get_product_prompt(product_id: int, current_user: dict = Depends(get_cur
 
 @api_router.put("/api/products/{product_id}/prompt")
 def api_save_product_prompt(product_id: int, payload: dict, current_user: dict = Depends(get_current_user)):
-    update_product_prompt(product_id, payload.get("agent_persona", ""), payload.get("call_flow_instructions", ""))
+    persona = payload.get("agent_persona", "")
+    flow = payload.get("call_flow_instructions", "")
+    logger.info(f"[API] SAVE prompt for product {product_id}: persona={len(persona)} chars, flow={len(flow)} chars, user={current_user.get('email')}")
+    update_product_prompt(product_id, persona, flow)
     return {"status": "ok"}
 
 @api_router.post("/api/products/{product_id}/generate-prompt")
@@ -466,6 +473,7 @@ Generate ONLY the system prompt text in Devanagari Hindi. No explanations or met
 @api_router.post("/api/products/{product_id}/generate-persona")
 async def api_generate_product_persona(product_id: int, payload: dict, current_user: dict = Depends(get_current_user)):
     """Use AI to generate agent persona + call flow from a product's scraped website info."""
+    logger.info(f"[API] generate-persona called for product {product_id} by user {current_user.get('email')}")
     from database import get_products_by_org
     import os
     from google import genai
@@ -525,11 +533,13 @@ Write in English. Keep each section detailed but practical (300-500 words each).
             text = text[4:].strip()
         import json
         result = json.loads(text)
+        logger.info(f"[API] generate-persona SUCCESS for product {product_id}: persona={len(result.get('agent_persona',''))} chars, flow={len(result.get('call_flow_instructions',''))} chars")
         return {"status": "success", "agent_persona": result.get("agent_persona", ""), "call_flow_instructions": result.get("call_flow_instructions", "")}
     except json.JSONDecodeError:
-        # If JSON parse fails, return the raw text as persona
+        logger.warning(f"[API] generate-persona JSON parse failed for product {product_id}, returning raw text ({len(text)} chars)")
         return {"status": "success", "agent_persona": text, "call_flow_instructions": ""}
     except Exception as e:
+        logger.error(f"[API] generate-persona FAILED for product {product_id}: {e}")
         return {"status": "error", "message": str(e)}
 
 # --- System Prompt & Voice Settings ---
