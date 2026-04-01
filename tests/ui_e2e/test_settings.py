@@ -16,15 +16,15 @@ def test_add_delete_product(auth_page, base_url):
     settings.add_product(prod_name)
     time.sleep(2)
 
-    # Verify it appeared (product name is in an editable input field)
-    expect(auth_page.locator(f"input[value='{prod_name}']")).to_be_visible(timeout=8000)
+    # Verify it appeared (product name shown as span text)
+    expect(auth_page.locator(f"span:text-is('{prod_name}')")).to_be_visible(timeout=8000)
 
     # Delete it
     settings.delete_product(prod_name)
     time.sleep(1)
 
     # Verify it's gone
-    expect(auth_page.locator(f"input[value='{prod_name}']")).to_be_hidden(timeout=8000)
+    expect(auth_page.locator(f"span:text-is('{prod_name}')")).to_be_hidden(timeout=8000)
 
 
 def test_add_delete_pronunciation(auth_page, base_url):
