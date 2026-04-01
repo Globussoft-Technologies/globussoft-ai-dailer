@@ -432,7 +432,7 @@ async def handle_media_stream(websocket: WebSocket):
     dg_connection.start(
         LiveOptions(
             model="nova-2",
-            language=(_tts_language_override or "hi"),
+            language={"hi": "hi", "mr": "hi", "ta": "ta", "te": "te", "kn": "kn", "ml": "ml", "gu": "gu", "bn": "bn", "pa": "pa", "en": "en"}.get(_tts_language_override or "hi", "hi"),  # Deepgram: use Hindi STT for Marathi (closest available)
             encoding="linear16",
             sample_rate=8000,
             channels=1,
