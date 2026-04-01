@@ -166,6 +166,7 @@ async def handle_media_stream(websocket: WebSocket):
             product_ctx = _camp_product.get("product_ctx", "")
             _product_persona = _camp_product.get("agent_persona", "")
             _product_call_flow = _camp_product.get("call_flow_instructions", "")
+            _product_name = _camp_product.get("product_name", "")
             if not product_ctx:
                 product_ctx = get_product_knowledge_context(org_id=_call_org_id)
         elif _call_org_id:
@@ -180,6 +181,7 @@ async def handle_media_stream(websocket: WebSocket):
         product_ctx = get_product_knowledge_context()
 
     # Build call context (voice identity, company name, lead source, system prompt)
+    _product_name = ""
     _ctx = build_call_context(
         lead_name=lead_name,
         lead_phone=lead_phone,
@@ -192,6 +194,7 @@ async def handle_media_stream(websocket: WebSocket):
         _product_persona=_product_persona,
         _product_call_flow=_product_call_flow,
         pronunciation_ctx=pronunciation_ctx,
+        _product_name=_product_name,
     )
     dynamic_context = _ctx["dynamic_context"]
     _agent_name = _ctx["_agent_name"]

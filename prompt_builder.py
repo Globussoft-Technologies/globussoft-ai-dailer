@@ -43,6 +43,7 @@ def build_call_context(
     _product_persona,
     _product_call_flow,
     pronunciation_ctx,
+    _product_name="",
 ):
     """
     Build the full call context dict used by the WebSocket handler.
@@ -61,9 +62,11 @@ def build_call_context(
         _agent_gender_hint = "तुम लड़का हो। 'रहा हूँ', 'करूँगा', 'बोल रहा हूँ' बोलो।"
         _bol = "बोल रहा हूँ"
 
-    # --- Extract company name from product context or org name ---
+    # --- Company name: product name > regex from context > org name ---
     _company_name = "हमारी कंपनी"
-    if product_ctx:
+    if _product_name and _product_name.strip() and not _product_name.startswith("http"):
+        _company_name = _product_name.strip()
+    elif product_ctx:
         _co_match = re.search(r'by\s+(\w[\w\s]*?)[\)\—\-]', product_ctx)
         if _co_match:
             _company_name = _co_match.group(1).strip()
