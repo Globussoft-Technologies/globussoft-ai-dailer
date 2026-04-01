@@ -131,7 +131,7 @@ async def handle_media_stream(websocket: WebSocket):
     _llm_lock = asyncio.Lock()
     _hangup_requested = [False]  # mutable flag to block new transcripts after [HANGUP]
     _last_transcript_time = [0.0]
-    _debounce_delay = 0.3  # 300ms debounce — balance between speed and not cutting user off
+    _debounce_delay = 0.15  # 150ms debounce — near-instant response
     _last_tts_end_time = [0.0]  # Track when TTS last finished, to give user breathing room
     _recording_mic_chunks = []
     _recording_tts_chunks = []
@@ -246,11 +246,10 @@ async def handle_media_stream(websocket: WebSocket):
                     t_start = time.time()
                     _last_transcript_time[0] = t_start
 
-                    # If TTS just finished/was cancelled, brief cooldown so user can speak
+                    # Brief cooldown after TTS ends so user can start speaking
                     time_since_tts = t_start - _last_tts_end_time[0]
-                    if time_since_tts < 0.5:
-                        extra_wait = 0.5 - time_since_tts
-                        await asyncio.sleep(extra_wait)
+                    if time_since_tts < 0.2:
+                        await asyncio.sleep(0.2 - time_since_tts)
 
                     await asyncio.sleep(_debounce_delay)
                     if _last_transcript_time[0] != t_start:
