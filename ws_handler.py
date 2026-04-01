@@ -516,7 +516,7 @@ async def handle_media_stream(websocket: WebSocket):
 
                 # Forward raw audio to Deepgram
                 dg_connection.send(audio_data)
-                # Capture mic audio for recording (mulaw→PCM)
+                # Capture mic audio for recording
                 if is_exotel_stream:
                     import audioop as _ao
                     try:
@@ -524,6 +524,9 @@ async def handle_media_stream(websocket: WebSocket):
                         _recording_mic_chunks.append((time.time(), pcm))
                     except Exception:
                         pass
+                else:
+                    # Web sim sends PCM directly via binary frames
+                    _recording_mic_chunks.append((time.time(), audio_data))
 
             # Handle text frames (Twilio/Exotel JSON)
             elif "text" in msg and msg["text"]:
