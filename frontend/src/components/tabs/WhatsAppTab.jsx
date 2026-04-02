@@ -151,10 +151,11 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgProducts, selectedOr
       const res = await apiFetch(`${API_URL}/wa/conversations`);
       if (res.ok) {
         const data = await res.json();
-        setConversations(data);
+        const convos = Array.isArray(data) ? data : (data.conversations || []);
+        setConversations(convos);
         // Build AI-enabled map
         const map = {};
-        data.forEach(c => { map[c.phone] = c.ai_active; });
+        convos.forEach(c => { map[c.phone || c.contact_phone] = c.ai_active !== false; });
         setAiEnabled(map);
       }
     } catch (e) { console.error('Failed to fetch conversations', e); }
@@ -167,7 +168,10 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgProducts, selectedOr
     if (!selectedPhone) return;
     try {
       const res = await apiFetch(`${API_URL}/wa/conversations/${encodeURIComponent(selectedPhone)}/messages`);
-      if (res.ok) setMessages(await res.json());
+      if (res.ok) {
+          const data = await res.json();
+          setMessages(Array.isArray(data) ? data : (data.messages || []));
+        }
     } catch (e) { console.error('Failed to fetch messages', e); }
   }, [apiFetch, API_URL, selectedPhone]);
 
