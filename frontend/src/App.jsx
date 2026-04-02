@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { Routes, Route, Navigate } from 'react-router-dom';
 import MonitorPage from './pages/MonitorPage';
 import KnowledgePage from './pages/KnowledgePage';
 import SandboxPage from './pages/SandboxPage';
@@ -27,8 +28,6 @@ export default function App() {
   const { activeVoiceProvider, setActiveVoiceProvider, activeVoiceId, setActiveVoiceId, activeLanguage, setActiveLanguage, savedVoiceName, setSavedVoiceName } = useVoice();
   const { dialingId, setDialingId, webCallActive, handleDial, handleWebCall, handleCampaignDial, handleCampaignWebCall } = useCall();
 
-  const [activeTab, setActiveTab] = useState('crm');
-
   // RBAC Global State
   const userRole = currentUser?.role || 'Agent';
 
@@ -51,64 +50,59 @@ export default function App() {
   return (
     <div className="dashboard-container">
       <TopHeader
-        activeTab={activeTab} setActiveTab={setActiveTab}
         userRole={userRole} currentUser={currentUser}
         handleLogout={logout}
       />
 
-      {activeTab === 'crm' ? (
-        <CrmPage
-          apiFetch={apiFetch} API_URL={API_URL}
-          selectedOrg={selectedOrg} orgTimezone={orgTimezone}
-          dialingId={dialingId} setDialingId={setDialingId}
-          webCallActive={webCallActive}
-          handleDial={handleDial} handleWebCall={handleWebCall}
-          campaigns={campaigns}
-          onCampaignClick={(campaign) => { setActiveTab('campaigns'); }}
-          activeVoiceProvider={activeVoiceProvider} setActiveVoiceProvider={setActiveVoiceProvider}
-          activeVoiceId={activeVoiceId} setActiveVoiceId={setActiveVoiceId}
-          activeLanguage={activeLanguage} setActiveLanguage={setActiveLanguage}
-          INDIAN_VOICES={INDIAN_VOICES} INDIAN_LANGUAGES={INDIAN_LANGUAGES}
-          savedVoiceName={savedVoiceName} setSavedVoiceName={setSavedVoiceName}
-          userRole={userRole} authToken={authToken}
-        />
-      ) : activeTab === 'campaigns' ? (
-        <CampaignsPage
-          apiFetch={apiFetch} API_URL={API_URL}
-          selectedOrg={selectedOrg} orgTimezone={orgTimezone} orgProducts={orgProducts}
-          dialingId={dialingId} webCallActive={webCallActive}
-          handleCampaignDial={handleCampaignDial} handleCampaignWebCall={handleCampaignWebCall}
-          activeVoiceProvider={activeVoiceProvider} activeVoiceId={activeVoiceId}
-          activeLanguage={activeLanguage}
-          INDIAN_VOICES={INDIAN_VOICES} INDIAN_LANGUAGES={INDIAN_LANGUAGES}
-          campaigns={campaigns} fetchCampaigns={fetchCampaigns}
-        />
-      ) : activeTab === 'ops' ? (
-        <OpsPage apiFetch={apiFetch} API_URL={API_URL} />
-      ) : activeTab === 'analytics' ? (
-        <AnalyticsPage apiFetch={apiFetch} API_URL={API_URL} />
-      ) : activeTab === 'whatsapp' ? (
-        <WhatsAppPage apiFetch={apiFetch} API_URL={API_URL} orgProducts={orgProducts} selectedOrg={selectedOrg} orgTimezone={orgTimezone} />
-      ) : activeTab === 'integrations' ? (
-        <IntegrationsPage apiFetch={apiFetch} API_URL={API_URL} orgTimezone={orgTimezone} />
-      ) : activeTab === 'monitor' ? (
-        <MonitorPage API_URL={API_URL} />
-      ) : activeTab === 'knowledge' ? (
-        <KnowledgePage API_URL={API_URL} />
-      ) : activeTab === 'sandbox' ? (
-        <SandboxPage API_URL={API_URL} />
-      ) : activeTab === 'settings' ? (
-        <SettingsPage
-          apiFetch={apiFetch} API_URL={API_URL}
-          selectedOrg={selectedOrg} orgs={orgs}
-          orgProducts={orgProducts} orgTimezone={orgTimezone}
-          fetchOrgProducts={fetchOrgProducts}
-        />
-      ) : activeTab === 'logs' ? (
-        <LogsPage API_URL={API_URL} authToken={authToken} />
-      ) : (
-        <CheckInPage apiFetch={apiFetch} API_URL={API_URL} />
-      )}
+      <Routes>
+        <Route path="/" element={<Navigate to="/crm" replace />} />
+        <Route path="/crm" element={
+          <CrmPage
+            apiFetch={apiFetch} API_URL={API_URL}
+            selectedOrg={selectedOrg} orgTimezone={orgTimezone}
+            dialingId={dialingId} setDialingId={setDialingId}
+            webCallActive={webCallActive}
+            handleDial={handleDial} handleWebCall={handleWebCall}
+            campaigns={campaigns}
+            activeVoiceProvider={activeVoiceProvider} setActiveVoiceProvider={setActiveVoiceProvider}
+            activeVoiceId={activeVoiceId} setActiveVoiceId={setActiveVoiceId}
+            activeLanguage={activeLanguage} setActiveLanguage={setActiveLanguage}
+            INDIAN_VOICES={INDIAN_VOICES} INDIAN_LANGUAGES={INDIAN_LANGUAGES}
+            savedVoiceName={savedVoiceName} setSavedVoiceName={setSavedVoiceName}
+            userRole={userRole} authToken={authToken}
+          />
+        } />
+        <Route path="/campaigns" element={
+          <CampaignsPage
+            apiFetch={apiFetch} API_URL={API_URL}
+            selectedOrg={selectedOrg} orgTimezone={orgTimezone} orgProducts={orgProducts}
+            dialingId={dialingId} webCallActive={webCallActive}
+            handleCampaignDial={handleCampaignDial} handleCampaignWebCall={handleCampaignWebCall}
+            activeVoiceProvider={activeVoiceProvider} activeVoiceId={activeVoiceId}
+            activeLanguage={activeLanguage}
+            INDIAN_VOICES={INDIAN_VOICES} INDIAN_LANGUAGES={INDIAN_LANGUAGES}
+            campaigns={campaigns} fetchCampaigns={fetchCampaigns}
+          />
+        } />
+        <Route path="/ops" element={<OpsPage apiFetch={apiFetch} API_URL={API_URL} />} />
+        <Route path="/analytics" element={<AnalyticsPage apiFetch={apiFetch} API_URL={API_URL} />} />
+        <Route path="/whatsapp" element={<WhatsAppPage apiFetch={apiFetch} API_URL={API_URL} orgProducts={orgProducts} selectedOrg={selectedOrg} orgTimezone={orgTimezone} />} />
+        <Route path="/integrations" element={<IntegrationsPage apiFetch={apiFetch} API_URL={API_URL} orgTimezone={orgTimezone} />} />
+        <Route path="/monitor" element={<MonitorPage API_URL={API_URL} />} />
+        <Route path="/knowledge" element={<KnowledgePage API_URL={API_URL} />} />
+        <Route path="/sandbox" element={<SandboxPage API_URL={API_URL} />} />
+        <Route path="/settings" element={
+          <SettingsPage
+            apiFetch={apiFetch} API_URL={API_URL}
+            selectedOrg={selectedOrg} orgs={orgs}
+            orgProducts={orgProducts} orgTimezone={orgTimezone}
+            fetchOrgProducts={fetchOrgProducts}
+          />
+        } />
+        <Route path="/logs" element={<LogsPage API_URL={API_URL} authToken={authToken} />} />
+        <Route path="/checkin" element={<CheckInPage apiFetch={apiFetch} API_URL={API_URL} />} />
+        <Route path="*" element={<Navigate to="/crm" replace />} />
+      </Routes>
 
     </div>
   );

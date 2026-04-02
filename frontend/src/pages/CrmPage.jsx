@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import CrmTab from '../components/tabs/CrmTab';
 import LeadModals from '../components/modals/LeadModals';
 import DocumentVault from '../components/modals/DocumentVault';
@@ -9,7 +10,7 @@ export default function CrmPage({
   apiFetch, API_URL, selectedOrg, orgTimezone,
   dialingId, setDialingId, webCallActive,
   handleDial, handleWebCall,
-  campaigns, onCampaignClick,
+  campaigns,
   activeVoiceProvider, setActiveVoiceProvider,
   activeVoiceId, setActiveVoiceId,
   activeLanguage, setActiveLanguage,
@@ -17,6 +18,7 @@ export default function CrmPage({
   savedVoiceName, setSavedVoiceName,
   userRole, authToken
 }) {
+  const navigate = useNavigate();
   // Lead State
   const [leads, setLeads] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -223,7 +225,7 @@ export default function CrmPage({
         handleDraftEmail={handleDraftEmail} dialingId={dialingId}
         webCallActive={webCallActive} handleWebCall={handleWebCall} handleDial={handleDial}
         campaigns={campaigns}
-        onCampaignClick={onCampaignClick}
+        onCampaignClick={() => navigate('/campaigns')}
       />
 
       <LeadModals

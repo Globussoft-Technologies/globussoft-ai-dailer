@@ -1,32 +1,35 @@
 import React from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 
 export default function TopHeader({
-  activeTab,
-  setActiveTab,
   userRole,
   currentUser,
   handleLogout
 }) {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const activeTab = location.pathname.replace('/', '') || 'crm';
+
   return (
     <header className="header" style={{display: 'flex', flexWrap: 'wrap', gap: '1rem', alignItems: 'center'}}>
       <div className="logo" style={{display: 'flex', alignItems: 'center', gap: '10px'}}>
         <img src="https://www.google.com/s2/favicons?domain=globussoft.ai&sz=128" alt="Globussoft Logo" style={{width: '32px', height: '32px', borderRadius: '8px', objectFit: 'contain', background: 'white', padding: '2px'}} />
         Globussoft Generative AI Dialer <span className="badge" style={{background: 'rgba(34, 197, 94, 0.2)', color: '#4ade80', ml: 2}}>LIVE</span>
       </div>
-      
+
       <div style={{display: 'flex', gap: '10px', alignItems: 'center', flex: 1}}>
-        <button data-testid="tab-crm" className={`tab-btn ${activeTab === 'crm' ? 'active' : ''}`} onClick={() => setActiveTab('crm')}>📊 CRM</button>
-        {userRole === 'Admin' && <button data-testid="tab-campaigns" className={`tab-btn ${activeTab === 'campaigns' ? 'active' : ''}`} onClick={() => setActiveTab('campaigns')}>📢 Campaigns</button>}
-        {userRole === 'Admin' && <button data-testid="tab-ops" className={`tab-btn ${activeTab === 'ops' ? 'active' : ''}`} onClick={() => setActiveTab('ops')}>📋 Ops & Tasks</button>}
-        {userRole === 'Admin' && <button data-testid="tab-analytics" className={`tab-btn ${activeTab === 'analytics' ? 'active' : ''}`} onClick={() => setActiveTab('analytics')}>📈 Analytics</button>}
-        {userRole === 'Admin' && <button data-testid="tab-whatsapp" className={`tab-btn ${activeTab === 'whatsapp' ? 'active' : ''}`} onClick={() => setActiveTab('whatsapp')}>💬 WhatsApp Comms</button>}
-        {userRole === 'Admin' && <button data-testid="tab-integrations" className={`tab-btn ${activeTab === 'integrations' ? 'active' : ''}`} onClick={() => setActiveTab('integrations')}>🔌 Integrations</button>}
-        {userRole === 'Admin' && <button data-testid="tab-monitor" className={`tab-btn ${activeTab === 'monitor' ? 'active' : ''}`} onClick={() => setActiveTab('monitor')}>🎙️ Monitor AI Calls</button>}
-        {userRole === 'Admin' && <button data-testid="tab-rag" className={`tab-btn ${activeTab === 'knowledge' ? 'active' : ''}`} onClick={() => setActiveTab('knowledge')}>🧠 RAG Knowledge</button>}
-        {userRole === 'Admin' && <button data-testid="tab-sandbox" className={`tab-btn ${activeTab === 'sandbox' ? 'active' : ''}`} onClick={() => setActiveTab('sandbox')}>🎯 AI Sandbox</button>}
-        {userRole === 'Admin' && <button data-testid="tab-settings" className={`tab-btn ${activeTab === 'settings' ? 'active' : ''}`} onClick={() => setActiveTab('settings')}>⚙️ Settings</button>}
-        {userRole === 'Admin' && <button data-testid="tab-logs" className={`tab-btn ${activeTab === 'logs' ? 'active' : ''}`} onClick={() => setActiveTab('logs')}>📋 Live Logs</button>}
-        
+        <button data-testid="tab-crm" className={`tab-btn ${activeTab === 'crm' ? 'active' : ''}`} onClick={() => navigate('/crm')}>📊 CRM</button>
+        {userRole === 'Admin' && <button data-testid="tab-campaigns" className={`tab-btn ${activeTab === 'campaigns' ? 'active' : ''}`} onClick={() => navigate('/campaigns')}>📢 Campaigns</button>}
+        {userRole === 'Admin' && <button data-testid="tab-ops" className={`tab-btn ${activeTab === 'ops' ? 'active' : ''}`} onClick={() => navigate('/ops')}>📋 Ops & Tasks</button>}
+        {userRole === 'Admin' && <button data-testid="tab-analytics" className={`tab-btn ${activeTab === 'analytics' ? 'active' : ''}`} onClick={() => navigate('/analytics')}>📈 Analytics</button>}
+        {userRole === 'Admin' && <button data-testid="tab-whatsapp" className={`tab-btn ${activeTab === 'whatsapp' ? 'active' : ''}`} onClick={() => navigate('/whatsapp')}>💬 WhatsApp Comms</button>}
+        {userRole === 'Admin' && <button data-testid="tab-integrations" className={`tab-btn ${activeTab === 'integrations' ? 'active' : ''}`} onClick={() => navigate('/integrations')}>🔌 Integrations</button>}
+        {userRole === 'Admin' && <button data-testid="tab-monitor" className={`tab-btn ${activeTab === 'monitor' ? 'active' : ''}`} onClick={() => navigate('/monitor')}>🎙️ Monitor AI Calls</button>}
+        {userRole === 'Admin' && <button data-testid="tab-rag" className={`tab-btn ${activeTab === 'knowledge' ? 'active' : ''}`} onClick={() => navigate('/knowledge')}>🧠 RAG Knowledge</button>}
+        {userRole === 'Admin' && <button data-testid="tab-sandbox" className={`tab-btn ${activeTab === 'sandbox' ? 'active' : ''}`} onClick={() => navigate('/sandbox')}>🎯 AI Sandbox</button>}
+        {userRole === 'Admin' && <button data-testid="tab-settings" className={`tab-btn ${activeTab === 'settings' ? 'active' : ''}`} onClick={() => navigate('/settings')}>⚙️ Settings</button>}
+        {userRole === 'Admin' && <button data-testid="tab-logs" className={`tab-btn ${activeTab === 'logs' ? 'active' : ''}`} onClick={() => navigate('/logs')}>📋 Live Logs</button>}
+
         <div style={{marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '12px'}}>
           {currentUser && (
             <span style={{fontSize: '0.8rem', color: '#94a3b8', letterSpacing: '0.5px'}}>
