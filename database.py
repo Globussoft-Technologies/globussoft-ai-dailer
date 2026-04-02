@@ -1363,6 +1363,25 @@ def delete_wa_channel_config(config_id: int) -> bool:
     return affected > 0
 
 
+def get_wa_channel_configs_by_provider(provider: str) -> List[Dict]:
+    """Get all active channel configs for a given provider (across all orgs)."""
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT * FROM wa_channel_config WHERE provider = %s AND is_active = 1 ORDER BY id",
+        (provider,)
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    for r in rows:
+        if isinstance(r.get('credentials'), str):
+            try:
+                r['credentials'] = json.loads(r['credentials'])
+            except Exception:
+                pass
+    return rows
+
+
 # ─── WhatsApp Conversations ───
 
 def save_wa_message(org_id: int, channel_config_id: int, contact_phone: str, contact_name: str,
