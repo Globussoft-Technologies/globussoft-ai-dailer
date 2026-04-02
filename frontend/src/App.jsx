@@ -17,25 +17,21 @@ import './index.css';
 import { API_URL } from './constants/api';
 import { INDIAN_VOICES, INDIAN_LANGUAGES } from './constants/voices';
 import { useAuth } from './contexts/AuthContext';
+import { useOrg } from './contexts/OrgContext';
 
 export default function App() {
   const { authToken, currentUser, apiFetch, logout } = useAuth();
-
+  const { selectedOrg, orgTimezone, orgProducts, orgs, fetchOrgProducts } = useOrg();
 
   const [activeTab, setActiveTab] = useState('crm');
   const [dialingId, setDialingId] = useState(null);
   const [webCallActive, setWebCallActive] = useState(null);
   const webCallWsRef = useRef(null);
   const webCallAudioCtxRef = useRef(null);
-  
+
   // RBAC Global State
   const userRole = currentUser?.role || 'Agent';
 
-  // Product Knowledge State
-  const [orgs, setOrgs] = useState([]);
-  const [selectedOrg, setSelectedOrg] = useState(null);
-  const [orgTimezone, setOrgTimezone] = useState(Intl.DateTimeFormat().resolvedOptions().timeZone);
-  const [orgProducts, setOrgProducts] = useState([]);
   const [activeVoiceProvider, setActiveVoiceProvider] = useState('elevenlabs');
   const [activeVoiceId, setActiveVoiceId] = useState('');
   const [savedVoiceName, setSavedVoiceName] = useState('');
@@ -43,59 +39,13 @@ export default function App() {
 
   const [campaigns, setCampaigns] = useState([]);
 
-
   const fetchCampaigns = async () => {
     try { const res = await apiFetch(`${API_URL}/campaigns`); setCampaigns(await res.json()); } catch(e){}
-  };
-
-  const fetchOrgs = async () => {
-    try {
-      const res = await apiFetch(`${API_URL}/organizations`);
-      const data = await res.json();
-      setOrgs(data);
-      // Auto-select user's org if only one
-      if (data.length === 1 && !selectedOrg) {
-        setSelectedOrg(data[0]);
-        // Set org timezone (or auto-detect and save)
-        const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-        if (data[0].timezone) {
-          setOrgTimezone(data[0].timezone);
-        } else {
-          // First time — save browser timezone to org
-          setOrgTimezone(browserTz);
-          apiFetch(`${API_URL}/organizations/${data[0].id}/timezone`, {
-            method: 'PUT', headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ timezone: browserTz })
-          }).catch(() => {});
-        }
-        fetchOrgProducts(data[0].id);
-        // Load voice settings
-        try {
-          const vRes = await apiFetch(`${API_URL}/organizations/${data[0].id}/voice-settings`);
-          const vs = await vRes.json();
-          if (vs.tts_provider) {
-            setActiveVoiceProvider(vs.tts_provider);
-            if (vs.tts_voice_id) {
-              setActiveVoiceId(vs.tts_voice_id);
-              const allV = [...(INDIAN_VOICES[vs.tts_provider] || []), ...(INDIAN_VOICES.elevenlabs || []), ...(INDIAN_VOICES.smallest || [])];
-              const found = allV.find(v => v.id === vs.tts_voice_id);
-              if (found) setSavedVoiceName(found.name);
-            }
-            if (vs.tts_language) setActiveLanguage(vs.tts_language);
-          }
-        } catch(e){}
-      }
-    } catch(e){}
-  };
-
-  const fetchOrgProducts = async (orgId) => {
-    try { const res = await apiFetch(`${API_URL}/organizations/${orgId}/products`); setOrgProducts(await res.json()); } catch(e){}
   };
 
   useEffect(() => {
     if (!currentUser) return;
     fetchCampaigns();
-    fetchOrgs();
   }, [currentUser]);
 
   const handleDial = async (lead) => {

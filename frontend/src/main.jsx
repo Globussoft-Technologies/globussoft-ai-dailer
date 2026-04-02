@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.jsx'
 import { AuthProvider } from './contexts/AuthContext'
+import { OrgProvider } from './contexts/OrgContext'
 
 class ErrorBoundary extends Component {
   constructor(props) { super(props); this.state = { hasError: false, error: null }; }
@@ -27,7 +28,9 @@ createRoot(document.getElementById('root')).render(
   <StrictMode>
     <ErrorBoundary>
       <AuthProvider>
-        <App />
+        <OrgProvider>
+          <App />
+        </OrgProvider>
       </AuthProvider>
     </ErrorBoundary>
   </StrictMode>,
