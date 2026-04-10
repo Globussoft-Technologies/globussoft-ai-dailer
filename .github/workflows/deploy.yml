@@ -1,0 +1,35 @@
+# Required GitHub Secrets (configure in repo Settings > Secrets and variables > Actions):
+#   - DEPLOY_HOST: Server hostname or IP
+#   - DEPLOY_USER: SSH username
+#   - DEPLOY_PASS: SSH password
+
+name: Deploy
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy to server
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          password: ${{ secrets.DEPLOY_PASS }}
+          script: |
+            cd ~/callified-ai
+            git stash 2>/dev/null
+            git pull origin main
+            source ~/.nvm/nvm.sh
+            cd frontend && npm install --production=false && npm run build
+            cd ..
+            source venv/bin/activate && pip install -r requirements.txt -q
+            echo ${{ secrets.DEPLOY_PASS }} | sudo -S systemctl restart callified-ai.service
+            sleep 5
+            curl -sf http://localhost:8001/api/debug/health || echo "Health check failed"
