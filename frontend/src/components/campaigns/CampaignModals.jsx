@@ -1,10 +1,12 @@
 import React from 'react';
+import { CAMPAIGN_TEMPLATES, INDUSTRY_COLORS, LANGUAGE_LABELS } from '../../constants/campaignTemplates';
 
 export default function CampaignModals({
   // Create Campaign Modal
   showCreateModal, setShowCreateModal,
   createForm, setCreateForm,
   handleCreateCampaign, loading, orgProducts,
+  selectedTemplate, setSelectedTemplate,
   // Add Leads Modal
   showAddLeadsModal, setShowAddLeadsModal,
   availableLeads, selectedLeadIds, toggleLeadSelection,
@@ -24,51 +26,104 @@ export default function CampaignModals({
     <>
       {/* Create Campaign Modal */}
       {showCreateModal && (
-        <div className="modal-overlay" onClick={() => setShowCreateModal(false)}>
+        <div className="modal-overlay" onClick={() => { setShowCreateModal(false); setSelectedTemplate && setSelectedTemplate(null); }}>
           <div className="glass-panel" onClick={e => e.stopPropagation()}
-            style={{maxWidth: '450px', width: '90%'}}>
+            style={{maxWidth: '680px', width: '95%', maxHeight: '85vh', overflowY: 'auto'}}>
             <h3 style={{marginTop: 0, color: '#e2e8f0'}}>Create New Campaign</h3>
-            <form onSubmit={handleCreateCampaign}>
-              <div style={{marginBottom: '1rem'}}>
-                <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>Campaign Name</label>
-                <input className="form-input" placeholder="e.g. AdsGPT March Campaign"
-                  value={createForm.name} onChange={e => setCreateForm({...createForm, name: e.target.value})}
-                  style={{width: '100%'}} />
+
+            {/* Template selector */}
+            <div style={{marginBottom: '1.5rem'}}>
+              <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '8px'}}>Start from a template (optional)</label>
+              <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: '8px'}}>
+                {CAMPAIGN_TEMPLATES.map(tpl => {
+                  const ic = INDUSTRY_COLORS[tpl.industry] || { bg: 'rgba(148,163,184,0.15)', color: '#94a3b8' };
+                  const isSelected = selectedTemplate?.id === tpl.id;
+                  return (
+                    <div key={tpl.id}
+                      onClick={() => {
+                        if (isSelected) {
+                          setSelectedTemplate(null);
+                          setCreateForm(f => ({...f, name: ''}));
+                        } else {
+                          setSelectedTemplate(tpl);
+                          setCreateForm(f => ({...f, name: tpl.name}));
+                        }
+                      }}
+                      style={{
+                        padding: '10px 12px', borderRadius: '8px', cursor: 'pointer',
+                        border: isSelected ? '2px solid #60a5fa' : '1px solid rgba(255,255,255,0.08)',
+                        background: isSelected ? 'rgba(96,165,250,0.1)' : 'rgba(255,255,255,0.03)',
+                        transition: 'all 0.15s ease',
+                      }}>
+                      <div style={{fontWeight: 600, fontSize: '0.82rem', color: '#e2e8f0', marginBottom: '4px'}}>{tpl.name}</div>
+                      <div style={{display: 'flex', gap: '4px', flexWrap: 'wrap', marginBottom: '4px'}}>
+                        <span style={{background: ic.bg, color: ic.color, fontSize: '0.65rem', padding: '1px 6px', borderRadius: '8px', fontWeight: 600}}>
+                          {tpl.industry}
+                        </span>
+                        <span style={{background: 'rgba(148,163,184,0.15)', color: '#94a3b8', fontSize: '0.65rem', padding: '1px 6px', borderRadius: '8px', fontWeight: 600}}>
+                          {LANGUAGE_LABELS[tpl.language] || tpl.language}
+                        </span>
+                      </div>
+                      <div style={{fontSize: '0.72rem', color: '#64748b', lineHeight: '1.3'}}>{tpl.description}</div>
+                    </div>
+                  );
+                })}
               </div>
-              <div style={{marginBottom: '1.5rem'}}>
-                <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>Product</label>
-                <select className="form-input" value={createForm.product_id}
-                  onChange={e => setCreateForm({...createForm, product_id: e.target.value})}
-                  style={{width: '100%'}}>
-                  <option value="">-- Select Product --</option>
-                  {orgProducts.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                </select>
-              </div>
-              <div style={{marginBottom: '1.5rem'}}>
-                <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>Lead Source (where did these leads come from?)</label>
-                <select className="form-input" value={createForm.lead_source}
-                  onChange={e => setCreateForm({...createForm, lead_source: e.target.value})}
-                  style={{width: '100%'}}>
-                  <option value="">-- Select Source --</option>
-                  <option value="facebook">Facebook / Meta Ads</option>
-                  <option value="google">Google Ads</option>
-                  <option value="instagram">Instagram</option>
-                  <option value="linkedin">LinkedIn</option>
-                  <option value="website">Website Form</option>
-                  <option value="referral">Referral</option>
-                  <option value="cold">Cold Outreach</option>
-                </select>
-              </div>
-              <div style={{display: 'flex', gap: '10px', justifyContent: 'flex-end'}}>
-                <button type="button" onClick={() => setShowCreateModal(false)}
-                  style={{background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: '#94a3b8', padding: '8px 16px', borderRadius: '8px', cursor: 'pointer'}}>
-                  Cancel
-                </button>
-                <button type="submit" className="btn-primary" disabled={loading || !createForm.name.trim()}>
-                  {loading ? 'Creating...' : 'Create'}
-                </button>
-              </div>
-            </form>
+              {selectedTemplate && (
+                <div style={{marginTop: '8px', padding: '8px 12px', borderRadius: '6px', background: 'rgba(96,165,250,0.08)', border: '1px solid rgba(96,165,250,0.2)'}}>
+                  <div style={{fontSize: '0.75rem', color: '#60a5fa', fontWeight: 600, marginBottom: '2px'}}>
+                    Template selected: {selectedTemplate.name}
+                  </div>
+                  <div style={{fontSize: '0.7rem', color: '#94a3b8'}}>
+                    Voice: {selectedTemplate.tts_provider} / {selectedTemplate.tts_voice_id} &middot; Will auto-set voice settings{createForm.product_id ? ' and product prompt' : ' (select a product to also set the prompt)'}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div style={{borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '1rem'}}>
+              <form onSubmit={handleCreateCampaign}>
+                <div style={{marginBottom: '1rem'}}>
+                  <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>Campaign Name</label>
+                  <input className="form-input" placeholder="e.g. AdsGPT March Campaign"
+                    value={createForm.name} onChange={e => setCreateForm({...createForm, name: e.target.value})}
+                    style={{width: '100%'}} />
+                </div>
+                <div style={{marginBottom: '1.5rem'}}>
+                  <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>Product {selectedTemplate && <span style={{color: '#60a5fa', fontSize: '0.75rem'}}>(required to apply prompt template)</span>}</label>
+                  <select className="form-input" value={createForm.product_id}
+                    onChange={e => setCreateForm({...createForm, product_id: e.target.value})}
+                    style={{width: '100%'}}>
+                    <option value="">-- Select Product --</option>
+                    {orgProducts.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  </select>
+                </div>
+                <div style={{marginBottom: '1.5rem'}}>
+                  <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>Lead Source (where did these leads come from?)</label>
+                  <select className="form-input" value={createForm.lead_source}
+                    onChange={e => setCreateForm({...createForm, lead_source: e.target.value})}
+                    style={{width: '100%'}}>
+                    <option value="">-- Select Source --</option>
+                    <option value="facebook">Facebook / Meta Ads</option>
+                    <option value="google">Google Ads</option>
+                    <option value="instagram">Instagram</option>
+                    <option value="linkedin">LinkedIn</option>
+                    <option value="website">Website Form</option>
+                    <option value="referral">Referral</option>
+                    <option value="cold">Cold Outreach</option>
+                  </select>
+                </div>
+                <div style={{display: 'flex', gap: '10px', justifyContent: 'flex-end'}}>
+                  <button type="button" onClick={() => { setShowCreateModal(false); setSelectedTemplate && setSelectedTemplate(null); }}
+                    style={{background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: '#94a3b8', padding: '8px 16px', borderRadius: '8px', cursor: 'pointer'}}>
+                    Cancel
+                  </button>
+                  <button type="submit" className="btn-primary" disabled={loading || !createForm.name.trim()}>
+                    {loading ? 'Creating...' : selectedTemplate ? 'Create from Template' : 'Create'}
+                  </button>
+                </div>
+              </form>
+            </div>
           </div>
         </div>
       )}

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import CampaignDetail from '../campaigns/CampaignDetail';
 import CampaignModals from '../campaigns/CampaignModals';
+import { CAMPAIGN_TEMPLATES } from '../../constants/campaignTemplates';
 
 export default function CampaignsTab({
   campaigns, fetchCampaigns, orgProducts, leads,
@@ -28,6 +29,7 @@ export default function CampaignsTab({
   const [liveEvents, setLiveEvents] = useState([]);
   const [showEditCampaignModal, setShowEditCampaignModal] = useState(false);
   const [editCampaignForm, setEditCampaignForm] = useState({ name: '', product_id: '', lead_source: '' });
+  const [selectedTemplate, setSelectedTemplate] = useState(null);
   const eventSourceRef = React.useRef(null);
   const [campVoice, setCampVoice] = useState({tts_provider: '', tts_voice_id: '', tts_language: ''});
 
@@ -114,7 +116,7 @@ export default function CampaignsTab({
     if (!createForm.name.trim()) return;
     setLoading(true);
     try {
-      await apiFetch(`${API_URL}/campaigns`, {
+      const res = await apiFetch(`${API_URL}/campaigns`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -124,7 +126,37 @@ export default function CampaignsTab({
           org_id: selectedOrg?.id || null
         })
       });
+      const newCampaign = await res.json();
+
+      // Apply template settings if one was selected
+      if (selectedTemplate && newCampaign?.id) {
+        // Set voice settings
+        await apiFetch(`${API_URL}/campaigns/${newCampaign.id}/voice-settings`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            tts_provider: selectedTemplate.tts_provider,
+            tts_voice_id: selectedTemplate.tts_voice_id,
+            tts_language: selectedTemplate.language
+          })
+        });
+
+        // Set product prompt if a product was linked
+        const productId = createForm.product_id || newCampaign.product_id;
+        if (productId) {
+          await apiFetch(`${API_URL}/products/${productId}/prompt`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              agent_persona: selectedTemplate.agent_persona,
+              call_flow_instructions: selectedTemplate.call_flow_instructions
+            })
+          });
+        }
+      }
+
       setCreateForm({ name: '', product_id: '', lead_source: '' });
+      setSelectedTemplate(null);
       setShowCreateModal(false);
       fetchCampaigns();
     } catch(e) { console.error(e); }
@@ -348,6 +380,8 @@ export default function CampaignsTab({
           handleCreateCampaign={handleCreateCampaign}
           loading={loading}
           orgProducts={orgProducts}
+          selectedTemplate={selectedTemplate}
+          setSelectedTemplate={setSelectedTemplate}
           showAddLeadsModal={showAddLeadsModal}
           setShowAddLeadsModal={setShowAddLeadsModal}
           availableLeads={availableLeads}
@@ -446,6 +480,8 @@ export default function CampaignsTab({
         handleCreateCampaign={handleCreateCampaign}
         loading={loading}
         orgProducts={orgProducts}
+        selectedTemplate={selectedTemplate}
+        setSelectedTemplate={setSelectedTemplate}
         showAddLeadsModal={false}
         setShowAddLeadsModal={setShowAddLeadsModal}
         availableLeads={availableLeads}
