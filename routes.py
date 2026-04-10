@@ -45,6 +45,7 @@ from database import (
     get_retries_by_campaign,
 )
 import rag
+from email_service import send_email, _wrap_html
 
 # ─── Pydantic Models ────────────────────────────────────────────────────────
 
@@ -1193,6 +1194,25 @@ def api_get_scheduled_calls(current_user: dict = Depends(get_current_user)):
 def api_cancel_scheduled_call(call_id: int, current_user: dict = Depends(get_current_user)):
     update_scheduled_call_status(call_id, "cancelled")
     return {"status": "success", "message": "Scheduled call cancelled"}
+
+# ─── Email Test ─────────────────────────────────────────────────────────────
+
+class TestEmailRequest(BaseModel):
+    to: str
+
+@api_router.post("/api/test-email")
+def api_test_email(data: TestEmailRequest, current_user: dict = Depends(get_current_user)):
+    body = _wrap_html("Test Email", """\
+        <h2 style="color:#a5b4fc;margin-top:0;">Test Email</h2>
+        <p>This is a test email from Callified AI.</p>
+        <p>If you received this, your email configuration is working correctly.</p>
+        <p style="color:#94a3b8;margin-top:24px;">Sent by: {}</p>""".format(
+            current_user.get("email", "unknown")
+        ))
+    ok = send_email(data.to, "Callified AI - Test Email", body)
+    if ok:
+        return {"ok": True, "message": f"Test email sent to {data.to}"}
+    raise HTTPException(500, "Failed to send test email. Check SMTP configuration.")
 
 # --- Mobile API ---
 

@@ -11,6 +11,7 @@ from billing import (
     get_usage_summary, get_payment_history,
     create_razorpay_order, verify_razorpay_payment, handle_razorpay_webhook,
 )
+from email_service import send_payment_receipt
 import logging
 
 logger = logging.getLogger("uvicorn.error")
@@ -106,6 +107,17 @@ def api_verify_payment(data: PaymentVerify, current_user: dict = Depends(get_cur
             org_id, data.razorpay_order_id, data.razorpay_payment_id,
             data.razorpay_signature, data.plan_id
         )
+        # Send payment receipt email
+        if result.get("status") == "success":
+            try:
+                plan = get_plan(data.plan_id)
+                user_email = current_user.get("email", "")
+                user_name = current_user.get("full_name", "Customer")
+                plan_name = plan.get("name", "Plan") if plan else "Plan"
+                amount_inr = (plan.get("price_paise", 0) / 100) if plan else 0
+                send_payment_receipt(user_email, user_name, plan_name, amount_inr, data.razorpay_payment_id)
+            except Exception as e:
+                logger.error(f"[BILLING] Payment receipt email failed: {e}")
         return result
     except ValueError as e:
         raise HTTPException(400, str(e))
