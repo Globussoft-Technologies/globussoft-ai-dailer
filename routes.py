@@ -330,6 +330,152 @@ def api_get_reports(current_user: dict = Depends(get_current_user)):
 def api_get_analytics(current_user: dict = Depends(get_current_user)):
     return get_analytics()
 
+@api_router.get("/api/analytics/dashboard")
+def api_get_analytics_dashboard(current_user: dict = Depends(get_current_user)):
+    """Aggregated analytics dashboard with real metrics from calls, transcripts, and reviews."""
+    from database import get_conn
+    from datetime import datetime, timedelta
+    org_id = current_user.get("org_id")
+    conn = get_conn()
+    cursor = conn.cursor()
+    try:
+        # Total calls (via leads belonging to this org)
+        cursor.execute("""
+            SELECT COUNT(*) as cnt FROM calls c
+            JOIN leads l ON c.lead_id = l.id
+            WHERE l.org_id = %s
+        """, (org_id,))
+        total_calls = cursor.fetchone()['cnt'] or 0
+
+        # Calls today
+        cursor.execute("""
+            SELECT COUNT(*) as cnt FROM calls c
+            JOIN leads l ON c.lead_id = l.id
+            WHERE l.org_id = %s AND DATE(c.created_at) = CURDATE()
+        """, (org_id,))
+        calls_today = cursor.fetchone()['cnt'] or 0
+
+        # Calls this week
+        cursor.execute("""
+            SELECT COUNT(*) as cnt FROM calls c
+            JOIN leads l ON c.lead_id = l.id
+            WHERE l.org_id = %s AND c.created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+        """, (org_id,))
+        calls_this_week = cursor.fetchone()['cnt'] or 0
+
+        # Avg call duration from call_transcripts
+        cursor.execute("""
+            SELECT COALESCE(AVG(ct.call_duration_s), 0) as avg_dur
+            FROM call_transcripts ct
+            JOIN leads l ON ct.lead_id = l.id
+            WHERE l.org_id = %s AND ct.call_duration_s > 0
+        """, (org_id,))
+        avg_call_duration_sec = round(cursor.fetchone()['avg_dur'] or 0, 1)
+
+        # Pickup rate: calls with status != 'no-answer' / total
+        pickup_rate = 0
+        if total_calls > 0:
+            cursor.execute("""
+                SELECT COUNT(*) as cnt FROM calls c
+                JOIN leads l ON c.lead_id = l.id
+                WHERE l.org_id = %s AND c.status != 'no-answer'
+            """, (org_id,))
+            picked_up = cursor.fetchone()['cnt'] or 0
+            pickup_rate = round(picked_up / total_calls, 2)
+
+        # Appointment rate from call_reviews
+        cursor.execute("""
+            SELECT COUNT(*) as total,
+                   SUM(CASE WHEN cr.appointment_booked = 1 THEN 1 ELSE 0 END) as booked
+            FROM call_reviews cr
+            JOIN campaigns camp ON cr.campaign_id = camp.id
+            WHERE camp.org_id = %s
+        """, (org_id,))
+        rev_row = cursor.fetchone()
+        rev_total = rev_row['total'] or 0
+        rev_booked = rev_row['booked'] or 0
+        appointment_rate = round(rev_booked / rev_total, 2) if rev_total > 0 else 0
+
+        # Sentiment breakdown
+        cursor.execute("""
+            SELECT cr.customer_sentiment as sentiment, COUNT(*) as cnt
+            FROM call_reviews cr
+            JOIN campaigns camp ON cr.campaign_id = camp.id
+            WHERE camp.org_id = %s AND cr.customer_sentiment IS NOT NULL
+            GROUP BY cr.customer_sentiment
+        """, (org_id,))
+        sentiment_breakdown = {"positive": 0, "neutral": 0, "negative": 0}
+        for row in cursor.fetchall():
+            s = (row['sentiment'] or '').lower()
+            if s in sentiment_breakdown:
+                sentiment_breakdown[s] = row['cnt']
+
+        # Top failure reasons
+        cursor.execute("""
+            SELECT cr.failure_reason as reason, COUNT(*) as cnt
+            FROM call_reviews cr
+            JOIN campaigns camp ON cr.campaign_id = camp.id
+            WHERE camp.org_id = %s AND cr.failure_reason IS NOT NULL AND cr.failure_reason != ''
+            GROUP BY cr.failure_reason
+            ORDER BY cnt DESC
+            LIMIT 10
+        """, (org_id,))
+        top_failure_reasons = [{"reason": r['reason'], "count": r['cnt']} for r in cursor.fetchall()]
+
+        # Daily calls for last 7 days
+        cursor.execute("""
+            SELECT DATE(c.created_at) as call_date, COUNT(*) as cnt
+            FROM calls c
+            JOIN leads l ON c.lead_id = l.id
+            WHERE l.org_id = %s AND c.created_at >= DATE_SUB(CURDATE(), INTERVAL 6 DAY)
+            GROUP BY DATE(c.created_at)
+            ORDER BY call_date
+        """, (org_id,))
+        daily_map = {str(r['call_date']): r['cnt'] for r in cursor.fetchall()}
+        daily_calls = []
+        for i in range(6, -1, -1):
+            d = (datetime.now() - timedelta(days=i)).strftime('%Y-%m-%d')
+            daily_calls.append({"date": d, "count": daily_map.get(d, 0)})
+
+        # Campaign performance
+        cursor.execute("""
+            SELECT camp.id as campaign_id, camp.name,
+                   COUNT(DISTINCT ct.id) as calls,
+                   SUM(CASE WHEN cr.appointment_booked = 1 THEN 1 ELSE 0 END) as appointments,
+                   COALESCE(AVG(cr.quality_score), 0) as avg_score
+            FROM campaigns camp
+            LEFT JOIN call_transcripts ct ON ct.campaign_id = camp.id
+            LEFT JOIN call_reviews cr ON cr.campaign_id = camp.id AND cr.transcript_id = ct.id
+            WHERE camp.org_id = %s
+            GROUP BY camp.id, camp.name
+            ORDER BY calls DESC
+            LIMIT 20
+        """, (org_id,))
+        campaign_performance = []
+        for r in cursor.fetchall():
+            campaign_performance.append({
+                "campaign_id": r['campaign_id'],
+                "name": r['name'],
+                "calls": r['calls'] or 0,
+                "appointments": r['appointments'] or 0,
+                "avg_score": round(float(r['avg_score'] or 0), 1),
+            })
+
+        return {
+            "total_calls": total_calls,
+            "calls_today": calls_today,
+            "calls_this_week": calls_this_week,
+            "avg_call_duration_sec": float(avg_call_duration_sec),
+            "pickup_rate": pickup_rate,
+            "appointment_rate": appointment_rate,
+            "sentiment_breakdown": sentiment_breakdown,
+            "top_failure_reasons": top_failure_reasons,
+            "daily_calls": daily_calls,
+            "campaign_performance": campaign_performance,
+        }
+    finally:
+        conn.close()
+
 @api_router.get("/api/whatsapp")
 def api_get_whatsapp(current_user: dict = Depends(get_current_user)):
     return get_all_whatsapp_logs(current_user.get("org_id"))
