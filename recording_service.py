@@ -284,5 +284,14 @@ Return ONLY the JSON object, no markdown, no explanation."""
         analysis = json.loads(text)
         save_call_review(transcript_id, campaign_id, lead_id, analysis)
         logger.info(f"[CALL_ANALYSIS] Saved review for transcript {transcript_id}: score={analysis.get('quality_score')}, sentiment={analysis.get('customer_sentiment')}")
+
+        # --- WhatsApp follow-up for booked appointments ---
+        if analysis.get("appointment_booked"):
+            try:
+                from wa_followup import send_appointment_confirmation
+                await send_appointment_confirmation(lead_id=lead_id, campaign_id=campaign_id)
+            except Exception as wa_err:
+                logger.error(f"[WA_FOLLOWUP] Error sending appointment confirmation for lead {lead_id}: {wa_err}")
+
     except Exception as e:
         logger.error(f"[CALL_ANALYSIS] Failed for transcript {transcript_id}: {e}")
