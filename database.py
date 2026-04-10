@@ -403,7 +403,33 @@ def init_db():
         )
     ''')
 
+    # --- Onboarding column migration ---
+    try:
+        cursor.execute("ALTER TABLE organizations ADD COLUMN onboarding_completed BOOLEAN DEFAULT FALSE")
+    except Exception:
+        pass  # Column already exists
+
     conn.close()
+
+
+def is_onboarding_completed(org_id: int) -> bool:
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute("SELECT onboarding_completed FROM organizations WHERE id = %s", (org_id,))
+    row = cursor.fetchone()
+    conn.close()
+    if not row:
+        return False
+    return bool(row.get("onboarding_completed", False))
+
+
+def mark_onboarding_completed(org_id: int):
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE organizations SET onboarding_completed = TRUE WHERE id = %s", (org_id,))
+    conn.close()
+    return True
+
 
 def get_all_leads(org_id: int) -> List[Dict]:
     conn = get_conn()

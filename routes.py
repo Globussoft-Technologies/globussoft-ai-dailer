@@ -45,6 +45,7 @@ from database import (
     get_retries_by_campaign,
     get_language_analytics, get_scored_leads,
     create_webhook, get_webhooks_by_org, delete_webhook, get_webhook_logs,
+    is_onboarding_completed, mark_onboarding_completed,
 )
 import rag
 from email_service import send_email, _wrap_html
@@ -1258,6 +1259,40 @@ def api_delete_webhook(webhook_id: int, current_user: dict = Depends(get_current
 @api_router.get("/api/webhooks/{webhook_id}/logs")
 def api_get_webhook_logs(webhook_id: int, current_user: dict = Depends(get_current_user)):
     return get_webhook_logs(webhook_id)
+
+
+# --- Onboarding ---
+
+@api_router.get("/api/onboarding/status")
+def api_onboarding_status(current_user: dict = Depends(get_current_user)):
+    org_id = current_user.get("org_id")
+    completed = is_onboarding_completed(org_id)
+
+    # Check step completion
+    from database import get_all_leads, get_org_voice_settings, get_campaigns_by_org
+    leads = get_all_leads(org_id)
+    has_leads = len(leads) > 0
+
+    voice = get_org_voice_settings(org_id)
+    has_voice = bool(voice.get("tts_voice_id"))
+
+    campaigns = get_campaigns_by_org(org_id)
+    has_campaign = len(campaigns) > 0
+
+    return {
+        "completed": completed,
+        "steps": {
+            "leads": has_leads,
+            "voice": has_voice,
+            "campaign": has_campaign
+        }
+    }
+
+@api_router.post("/api/onboarding/complete")
+def api_onboarding_complete(current_user: dict = Depends(get_current_user)):
+    org_id = current_user.get("org_id")
+    mark_onboarding_completed(org_id)
+    return {"status": "ok"}
 
 
 # --- Mobile API ---

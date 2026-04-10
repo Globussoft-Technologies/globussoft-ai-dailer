@@ -6,6 +6,7 @@ import KnowledgePage from './pages/KnowledgePage';
 import SandboxPage from './pages/SandboxPage';
 import AuthPage from './components/AuthPage';
 import TopHeader from './components/TopHeader';
+import OnboardingWizard from './components/OnboardingWizard';
 import CrmPage from './pages/CrmPage';
 import OpsPage from './pages/OpsPage';
 import AnalyticsPage from './pages/AnalyticsPage';
@@ -35,6 +36,7 @@ export default function App() {
   const userRole = currentUser?.role || 'Agent';
 
   const [campaigns, setCampaigns] = useState([]);
+  const [showOnboarding, setShowOnboarding] = useState(false);
 
   const fetchCampaigns = async () => {
     try { const res = await apiFetch(`${API_URL}/campaigns`); setCampaigns(await res.json()); } catch(e){}
@@ -43,6 +45,14 @@ export default function App() {
   useEffect(() => {
     if (!currentUser) return;
     fetchCampaigns();
+    // Check onboarding status
+    (async () => {
+      try {
+        const res = await apiFetch(`${API_URL}/onboarding/status`);
+        const data = await res.json();
+        if (!data.completed) setShowOnboarding(true);
+      } catch (e) {}
+    })();
   }, [currentUser]);
 
   // ─── PUBLIC ROUTES (no auth required) ───
@@ -58,6 +68,15 @@ export default function App() {
 
   return (
     <div className="dashboard-container">
+      {showOnboarding && (
+        <OnboardingWizard
+          apiFetch={apiFetch} API_URL={API_URL}
+          selectedOrg={selectedOrg}
+          orgProducts={orgProducts}
+          fetchOrgProducts={fetchOrgProducts}
+          onComplete={() => setShowOnboarding(false)}
+        />
+      )}
       <TopHeader
         userRole={userRole} currentUser={currentUser}
         handleLogout={logout}
