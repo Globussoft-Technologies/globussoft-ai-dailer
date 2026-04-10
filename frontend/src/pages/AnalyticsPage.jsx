@@ -2,13 +2,18 @@ import React, { useState, useEffect } from 'react';
 
 export default function AnalyticsPage({ apiFetch, API_URL }) {
   const [data, setData] = useState(null);
+  const [langData, setLangData] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     (async () => {
       try {
-        const res = await apiFetch(`${API_URL}/analytics/dashboard`);
-        setData(await res.json());
+        const [dashRes, langRes] = await Promise.all([
+          apiFetch(`${API_URL}/analytics/dashboard`),
+          apiFetch(`${API_URL}/analytics/languages`),
+        ]);
+        setData(await dashRes.json());
+        setLangData(await langRes.json());
       } catch (e) {
         console.error('Failed to load analytics', e);
       } finally {
@@ -133,6 +138,47 @@ export default function AnalyticsPage({ apiFetch, API_URL }) {
           </div>
         </div>
       )}
+
+      {/* Language Performance */}
+      <div style={{padding: '0 24px', marginBottom: '2rem'}}>
+        <div className="glass-panel" style={{padding: '1.5rem'}}>
+          <h4 style={{marginTop: 0, color: '#94a3b8', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '1rem'}}>Language Performance</h4>
+          {langData.length === 0 ? (
+            <p style={{color: '#64748b', fontSize: '0.9rem'}}>No language data yet. Calls need campaign language settings to appear here.</p>
+          ) : (
+            <div style={{overflowX: 'auto'}}>
+              <table style={{width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem'}}>
+                <thead>
+                  <tr style={{borderBottom: '1px solid rgba(255,255,255,0.1)'}}>
+                    <th style={thStyle}>Language</th>
+                    <th style={{...thStyle, textAlign: 'center'}}>Total Calls</th>
+                    <th style={{...thStyle, textAlign: 'center'}}>Appointments</th>
+                    <th style={{...thStyle, textAlign: 'center'}}>Conversion Rate</th>
+                    <th style={{...thStyle, textAlign: 'center'}}>Avg Quality</th>
+                    <th style={{...thStyle, textAlign: 'center'}}>Avg Duration</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {langData.map((row) => (
+                    <tr key={row.language} style={{borderBottom: '1px solid rgba(255,255,255,0.05)'}}>
+                      <td style={tdStyle}>{LANG_NAMES[row.language] || row.language}</td>
+                      <td style={{...tdStyle, textAlign: 'center'}}>{row.total_calls}</td>
+                      <td style={{...tdStyle, textAlign: 'center'}}>
+                        <span style={{color: row.appointments > 0 ? '#22c55e' : '#64748b'}}>{row.appointments}</span>
+                      </td>
+                      <td style={{...tdStyle, textAlign: 'center'}}>{row.conversion_rate}%</td>
+                      <td style={{...tdStyle, textAlign: 'center'}}>
+                        <ScoreBadge score={row.avg_score} />
+                      </td>
+                      <td style={{...tdStyle, textAlign: 'center'}}>{Math.round(row.avg_duration)}s</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -168,6 +214,12 @@ function ScoreBadge({ score }) {
   else if (score > 0) color = '#ef4444';
   return <span style={{color, fontWeight: 600}}>{score > 0 ? score.toFixed(1) : '--'}</span>;
 }
+
+const LANG_NAMES = {
+  hi: 'Hindi', bn: 'Bengali', mr: 'Marathi', en: 'English',
+  ta: 'Tamil', te: 'Telugu', kn: 'Kannada', ml: 'Malayalam',
+  gu: 'Gujarati', pa: 'Punjabi', or: 'Odia', as: 'Assamese',
+};
 
 const thStyle = { padding: '0.75rem 1rem', textAlign: 'left', color: '#94a3b8', fontWeight: 600, fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.5px' };
 const tdStyle = { padding: '0.75rem 1rem', color: '#e2e8f0' };

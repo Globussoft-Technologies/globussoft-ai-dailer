@@ -1708,6 +1708,100 @@ def get_retries_by_campaign(campaign_id: int) -> List[Dict]:
     return rows
 
 
+def get_language_analytics(org_id: int) -> List[Dict]:
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT c.tts_language AS language,
+               COUNT(DISTINCT ct.id) AS total_calls,
+               COALESCE(AVG(cr.quality_score), 0) AS avg_score,
+               SUM(CASE WHEN cr.appointment_booked = 1 THEN 1 ELSE 0 END) AS appointments,
+               COALESCE(AVG(ct.call_duration_s), 0) AS avg_duration
+        FROM campaigns c
+        JOIN call_transcripts ct ON ct.campaign_id = c.id
+        LEFT JOIN call_reviews cr ON cr.transcript_id = ct.id
+        WHERE c.org_id = %s AND c.tts_language IS NOT NULL
+        GROUP BY c.tts_language
+        ORDER BY total_calls DESC
+    """, (org_id,))
+    rows = cursor.fetchall()
+    conn.close()
+    result = []
+    for r in rows:
+        total = r['total_calls'] or 0
+        appts = int(r['appointments'] or 0)
+        result.append({
+            'language': r['language'],
+            'total_calls': total,
+            'avg_score': round(float(r['avg_score'] or 0), 1),
+            'appointments': appts,
+            'conversion_rate': round(appts / total * 100, 1) if total > 0 else 0,
+            'avg_duration': round(float(r['avg_duration'] or 0), 1),
+        })
+    return result
+
+
+def get_scored_leads(org_id: int) -> List[Dict]:
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT l.id, l.first_name, l.last_name, l.phone, l.source, l.status,
+               cr.quality_score, cr.customer_sentiment, cr.appointment_booked
+        FROM leads l
+        LEFT JOIN (
+            SELECT cr1.*
+            FROM call_reviews cr1
+            INNER JOIN (
+                SELECT lead_id, MAX(id) AS max_id
+                FROM call_reviews
+                GROUP BY lead_id
+            ) cr2 ON cr1.id = cr2.max_id
+        ) cr ON cr.lead_id = l.id
+        WHERE l.org_id = %s
+    """, (org_id,))
+    rows = cursor.fetchall()
+    conn.close()
+
+    scored = []
+    for r in rows:
+        # Quality score component: 0-10 scale, weight 40% -> max 40 points
+        qs = float(r['quality_score'] or 0)
+        quality_component = (qs / 10.0) * 40
+
+        # Sentiment component: weight 30% -> max 30 points
+        sentiment = (r['customer_sentiment'] or '').lower()
+        if sentiment == 'positive':
+            sentiment_component = (3 / 3.0) * 30  # 30
+        elif sentiment == 'neutral':
+            sentiment_component = (1 / 3.0) * 30  # 10
+        elif sentiment == 'negative':
+            sentiment_component = 0
+        else:
+            sentiment_component = 0
+
+        # Appointment component: weight 30% -> max 30 points
+        appt_component = 30 if r['appointment_booked'] else 0
+
+        score = round(quality_component + sentiment_component + appt_component)
+        score = max(0, min(100, score))
+
+        scored.append({
+            'id': r['id'],
+            'first_name': r['first_name'],
+            'last_name': r['last_name'],
+            'phone': r['phone'],
+            'source': r['source'],
+            'status': r['status'],
+            'quality_score': int(qs),
+            'sentiment': sentiment or None,
+            'appointment_booked': bool(r['appointment_booked']),
+            'lead_score': score,
+        })
+
+    scored.sort(key=lambda x: x['lead_score'], reverse=True)
+    return scored
+
+
 def has_pending_or_exhausted_retry(lead_id: int) -> Dict:
     conn = get_conn()
     cursor = conn.cursor()

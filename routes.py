@@ -43,6 +43,7 @@ from database import (
     create_demo_request, get_all_demo_requests,
     create_scheduled_call, get_scheduled_calls_by_org, update_scheduled_call_status,
     get_retries_by_campaign,
+    get_language_analytics, get_scored_leads,
 )
 import rag
 from email_service import send_email, _wrap_html
@@ -476,6 +477,18 @@ def api_get_analytics_dashboard(current_user: dict = Depends(get_current_user)):
         }
     finally:
         conn.close()
+
+@api_router.get("/api/analytics/languages")
+def api_get_language_analytics(current_user: dict = Depends(get_current_user)):
+    """Performance metrics broken down by TTS language."""
+    org_id = current_user.get("org_id")
+    return get_language_analytics(org_id)
+
+@api_router.get("/api/leads/scored")
+def api_get_scored_leads(current_user: dict = Depends(get_current_user)):
+    """Leads ranked by composite lead score (quality + sentiment + appointment)."""
+    org_id = current_user.get("org_id")
+    return get_scored_leads(org_id)
 
 @api_router.get("/api/whatsapp")
 def api_get_whatsapp(current_user: dict = Depends(get_current_user)):
