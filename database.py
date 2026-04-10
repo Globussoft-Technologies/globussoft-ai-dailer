@@ -1,6 +1,9 @@
 import pymysql
 from dbutils.pooled_db import PooledDB
 import json
+import hashlib
+import secrets
+import string
 from typing import List, Dict, Optional
 from datetime import datetime, timedelta
 import random
@@ -429,6 +432,20 @@ def init_db():
             UNIQUE KEY org_phone (org_id, phone),
             FOREIGN KEY (org_id) REFERENCES organizations (id) ON DELETE CASCADE,
             INDEX idx_phone (phone)
+        )
+    ''')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS api_keys (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            org_id INT NOT NULL,
+            key_hash VARCHAR(255) NOT NULL,
+            key_prefix VARCHAR(10) NOT NULL,
+            name VARCHAR(255) NOT NULL,
+            is_active BOOLEAN DEFAULT TRUE,
+            last_used_at DATETIME,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (org_id) REFERENCES organizations (id) ON DELETE CASCADE
         )
     ''')
 
@@ -2099,3 +2116,79 @@ def get_webhook_logs(webhook_id: int, limit: int = 50) -> List[Dict]:
         if r.get('payload') and isinstance(r['payload'], str):
             r['payload'] = json.loads(r['payload'])
     return rows
+
+
+# ─── API Key Helpers ──────────────────────────────────────────────────────
+
+def _generate_api_key() -> str:
+    """Generate a key in the format cal_ + 32 random alphanumeric chars."""
+    chars = string.ascii_letters + string.digits
+    random_part = ''.join(secrets.choice(chars) for _ in range(32))
+    return f"cal_{random_part}"
+
+
+def _hash_api_key(key: str) -> str:
+    """SHA-256 hash of the full API key."""
+    return hashlib.sha256(key.encode()).hexdigest()
+
+
+def create_api_key(org_id: int, name: str) -> dict:
+    """Create a new API key for an organization. Returns dict with the full
+    plaintext key (shown only once), id, key_prefix, and name."""
+    key = _generate_api_key()
+    key_hash = _hash_api_key(key)
+    key_prefix = key[:8]  # "cal_xxxx"
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO api_keys (org_id, key_hash, key_prefix, name) VALUES (%s, %s, %s, %s)",
+        (org_id, key_hash, key_prefix, name),
+    )
+    key_id = cursor.lastrowid
+    conn.close()
+    return {"id": key_id, "key": key, "key_prefix": key_prefix, "name": name}
+
+
+def validate_api_key(key: str) -> Optional[Dict]:
+    """Hash the key, look it up. Return row dict (with org_id) if valid and
+    active, otherwise None. Updates last_used_at on success."""
+    key_hash = _hash_api_key(key)
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT * FROM api_keys WHERE key_hash = %s AND is_active = TRUE",
+        (key_hash,),
+    )
+    row = cursor.fetchone()
+    if row:
+        cursor.execute(
+            "UPDATE api_keys SET last_used_at = NOW() WHERE id = %s",
+            (row["id"],),
+        )
+    conn.close()
+    return row
+
+
+def get_api_keys_by_org(org_id: int) -> List[Dict]:
+    """List API keys for an org (prefix only, never full key)."""
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT id, org_id, key_prefix, name, is_active, last_used_at, created_at "
+        "FROM api_keys WHERE org_id = %s ORDER BY created_at DESC",
+        (org_id,),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+
+def delete_api_key(key_id: int, org_id: int):
+    """Revoke (hard-delete) an API key, scoped to the org."""
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute(
+        "DELETE FROM api_keys WHERE id = %s AND org_id = %s",
+        (key_id, org_id),
+    )
+    conn.close()

@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from database import (
     get_user_by_email, create_user, create_organization, get_all_organizations,
     create_reset_token, get_valid_reset_token, mark_token_used, update_user_password,
+    validate_api_key,
 )
 from email_service import send_email, _wrap_html, APP_URL
 
@@ -126,6 +127,35 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
     if user is None:
         raise credentials_exception
     return user
+
+async def get_current_user_or_api_key(request: Request):
+    """Try JWT auth first, then fall back to API key in Authorization: Bearer header.
+
+    If the Bearer token starts with 'cal_', validate it as an API key and return
+    a synthetic user dict with org_id and role='ApiKey'.  Otherwise delegate to
+    the normal JWT-based get_current_user flow.
+    """
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:]
+        if token.startswith("cal_"):
+            api_key_row = validate_api_key(token)
+            if api_key_row is None:
+                raise HTTPException(
+                    status_code=401,
+                    detail="Invalid or revoked API key",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+            return {
+                "id": None,
+                "org_id": api_key_row["org_id"],
+                "role": "ApiKey",
+                "email": f"apikey:{api_key_row['name']}",
+                "full_name": api_key_row["name"],
+                "_api_key_id": api_key_row["id"],
+            }
+    # Fall back to normal JWT auth
+    return await get_current_user(await oauth2_scheme(request))
 
 # ─── Pydantic Models ────────────────────────────────────────────────────────
 
