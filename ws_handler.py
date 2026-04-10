@@ -439,7 +439,7 @@ async def handle_media_stream(websocket: WebSocket):
     dg_connection.on(LiveTranscriptionEvents.Transcript, on_message)
 
     _stt_lang = _tts_language_override or "hi"
-    _stt_model = "nova-3" if _stt_lang in ("mr", "mr-IN") else "nova-2"
+    _stt_model = "nova-3" if _stt_lang in ("mr", "mr-IN", "bn", "bn-IN") else "nova-2"
     dg_connection.start(
         LiveOptions(
             model=_stt_model,
