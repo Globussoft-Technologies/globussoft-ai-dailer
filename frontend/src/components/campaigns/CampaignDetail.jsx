@@ -22,6 +22,9 @@ export default function CampaignDetail({
   const [callInsights, setCallInsights] = useState(null);
   const [callReviews, setCallReviews] = useState([]);
   const [insightsLoading, setInsightsLoading] = useState(false);
+  const [billingUsage, setBillingUsage] = useState(null);
+  const [retries, setRetries] = useState([]);
+  const [retriesLoading, setRetriesLoading] = useState(false);
 
   const fetchInsights = async () => {
     setInsightsLoading(true);
@@ -38,7 +41,29 @@ export default function CampaignDetail({
 
   useEffect(() => {
     if (detailTab === 'insights') fetchInsights();
+    if (detailTab === 'retries') fetchRetries();
   }, [detailTab, selectedCampaign.id]);
+
+  // Fetch billing usage for the widget
+  useEffect(() => {
+    const fetchBilling = async () => {
+      try {
+        const res = await apiFetch(`${API_URL}/billing/usage`);
+        const data = await res.json();
+        if (data && data.has_subscription) setBillingUsage(data);
+      } catch (e) { /* no subscription — ignore */ }
+    };
+    fetchBilling();
+  }, []);
+
+  const fetchRetries = async () => {
+    setRetriesLoading(true);
+    try {
+      const res = await apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/retries`);
+      setRetries(await res.json());
+    } catch (e) { console.error('Failed to fetch retries', e); }
+    setRetriesLoading(false);
+  };
 
   const scoreColor = (s) => {
     if (s >= 4) return '#22c55e';
@@ -164,6 +189,32 @@ export default function CampaignDetail({
         )}
       </div>
 
+      {/* Billing Minutes Widget */}
+      {billingUsage && (
+        <div style={{
+          display: 'inline-flex', alignItems: 'center', gap: '10px',
+          background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.2)',
+          borderRadius: '20px', padding: '6px 16px', marginBottom: '1rem',
+        }}>
+          <span style={{fontSize: '0.8rem', color: '#e2e8f0', fontWeight: 600, whiteSpace: 'nowrap'}}>
+            {'\u23F1'} {billingUsage.minutes_remaining} / {billingUsage.minutes_included} min remaining
+          </span>
+          <div style={{
+            width: '80px', height: '6px', background: 'rgba(100,116,139,0.3)',
+            borderRadius: '3px', overflow: 'hidden',
+          }}>
+            <div style={{
+              width: `${Math.min(100, (billingUsage.minutes_used / billingUsage.minutes_included) * 100)}%`,
+              height: '100%', borderRadius: '3px',
+              background: (billingUsage.minutes_used / billingUsage.minutes_included) > 0.9
+                ? '#ef4444' : (billingUsage.minutes_used / billingUsage.minutes_included) > 0.7
+                ? '#f59e0b' : '#6366f1',
+              transition: 'width 0.5s ease',
+            }} />
+          </div>
+        </div>
+      )}
+
       {/* Live Dial Events Feed */}
       {liveEvents.length > 0 && (
         <div className="glass-panel" style={{marginBottom: '1rem', padding: '12px', maxHeight: '200px', overflowY: 'auto'}}>
@@ -288,6 +339,12 @@ export default function CampaignDetail({
             background: detailTab === 'insights' ? 'rgba(168,85,247,0.2)' : 'transparent',
             color: detailTab === 'insights' ? '#a855f7' : '#64748b'}}>
           📊 Call Insights
+        </button>
+        <button onClick={() => setDetailTab('retries')}
+          style={{padding: '8px 20px', border: 'none', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem',
+            background: detailTab === 'retries' ? 'rgba(245,158,11,0.2)' : 'transparent',
+            color: detailTab === 'retries' ? '#f59e0b' : '#64748b'}}>
+          🔄 Retries
         </button>
       </div>
 
@@ -487,6 +544,58 @@ export default function CampaignDetail({
                 </table>
               </div>
             </>
+          )}
+        </div>
+      )}
+
+      {/* Retries Tab */}
+      {detailTab === 'retries' && (
+        <div style={{marginBottom: '1.5rem'}}>
+          {retriesLoading ? (
+            <div className="glass-panel" style={{padding: '2rem', textAlign: 'center', color: '#94a3b8'}}>Loading retry queue...</div>
+          ) : retries.length === 0 ? (
+            <div className="glass-panel" style={{padding: '2rem', textAlign: 'center', color: '#64748b'}}>No retries queued for this campaign.</div>
+          ) : (
+            <div className="glass-panel" style={{overflowX: 'auto'}}>
+              <table className="leads-table" style={{width: '100%'}}>
+                <thead>
+                  <tr>
+                    <th>Lead</th>
+                    <th>Phone</th>
+                    <th>Attempt</th>
+                    <th>Retry Time</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {retries.map(r => {
+                    const retryStatusColors = {
+                      pending: { color: '#f59e0b', bg: 'rgba(245,158,11,0.1)', border: 'rgba(245,158,11,0.3)' },
+                      dialing: { color: '#60a5fa', bg: 'rgba(96,165,250,0.1)', border: 'rgba(96,165,250,0.3)' },
+                      completed: { color: '#22c55e', bg: 'rgba(34,197,94,0.1)', border: 'rgba(34,197,94,0.3)' },
+                      exhausted: { color: '#ef4444', bg: 'rgba(239,68,68,0.1)', border: 'rgba(239,68,68,0.3)' },
+                    };
+                    const sc = retryStatusColors[r.status] || retryStatusColors.pending;
+                    return (
+                      <tr key={r.id}>
+                        <td style={{fontWeight: 600}}>{r.first_name || r.lead_name || '-'} {r.last_name || ''}</td>
+                        <td style={{fontFamily: 'SFMono-Regular, Consolas, monospace', color: '#cbd5e1', fontSize: '0.85rem'}}>{r.phone}</td>
+                        <td style={{fontSize: '0.85rem', color: '#e2e8f0', fontWeight: 600}}>{r.attempt || r.attempt_number || 1}/{r.max_attempts || 3}</td>
+                        <td style={{fontSize: '0.8rem', color: '#94a3b8'}}>{r.retry_time ? formatDateTime(r.retry_time, orgTimezone) : '-'}</td>
+                        <td>
+                          <span style={{
+                            padding: '3px 10px', borderRadius: '12px', fontSize: '0.75rem', fontWeight: 600,
+                            color: sc.color, background: sc.bg, border: `1px solid ${sc.border}`,
+                          }}>
+                            {r.status}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           )}
         </div>
       )}

@@ -14,6 +14,7 @@ import SettingsPage from './pages/SettingsPage';
 import LogsPage from './pages/LogsPage';
 import CheckInPage from './pages/CheckInPage';
 import BillingPage from './pages/BillingPage';
+import ScheduledCallsPage from './pages/ScheduledCallsPage';
 import CampaignsPage from './pages/CampaignsPage';
 import './index.css';
 import { API_URL } from './constants/api';
@@ -103,6 +104,7 @@ export default function App() {
         <Route path="/logs" element={<LogsPage API_URL={API_URL} authToken={authToken} />} />
         <Route path="/checkin" element={<CheckInPage apiFetch={apiFetch} API_URL={API_URL} />} />
         <Route path="/billing" element={<BillingPage apiFetch={apiFetch} API_URL={API_URL} />} />
+        <Route path="/scheduled" element={<ScheduledCallsPage apiFetch={apiFetch} API_URL={API_URL} />} />
         <Route path="*" element={<Navigate to="/crm" replace />} />
       </Routes>
 
