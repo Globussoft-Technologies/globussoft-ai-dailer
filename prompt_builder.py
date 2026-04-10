@@ -106,6 +106,10 @@ def build_call_context(
     _company_name = "আমাদের কোম্পানি" if _is_bengali else "हमारी कंपनी"
     if _product_name and _product_name.strip() and not _product_name.startswith("http"):
         _company_name = _product_name.strip()
+    elif _product_name and _product_name.startswith("http"):
+        _domain_match = re.search(r'://(?:www\.)?([^./]+)', _product_name)
+        if _domain_match:
+            _company_name = _domain_match.group(1).upper()
     elif product_ctx:
         _co_match = re.search(r'by\s+(\w[\w\s]*?)[\)\—\-]', product_ctx)
         if _co_match:
