@@ -403,7 +403,116 @@ def init_db():
         )
     ''')
 
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS dnd_numbers (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            org_id INT NOT NULL,
+            phone VARCHAR(50) NOT NULL,
+            source ENUM('manual','ndnc','customer_request') DEFAULT 'manual',
+            added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE KEY org_phone (org_id, phone),
+            FOREIGN KEY (org_id) REFERENCES organizations (id) ON DELETE CASCADE,
+            INDEX idx_phone (phone)
+        )
+    ''')
+
     conn.close()
+
+# ─── Phone Normalization ───────────────────────────────────────────────────
+
+def normalize_phone(phone: str) -> str:
+    """Strip +, 91 prefix, spaces, dashes. Keep last 10 digits."""
+    phone = phone.replace("+", "").replace(" ", "").replace("-", "")
+    # Strip leading country code 91
+    if len(phone) > 10 and phone.startswith("91"):
+        phone = phone[2:]
+    # Keep last 10 digits
+    return phone[-10:] if len(phone) >= 10 else phone
+
+# ─── DND Helpers ───────────────────────────────────────────────────────────
+
+def add_dnd_number(org_id: int, phone: str, source: str = 'manual'):
+    phone = normalize_phone(phone)
+    conn = get_conn()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "INSERT IGNORE INTO dnd_numbers (org_id, phone, source) VALUES (%s, %s, %s)",
+            (org_id, phone, source)
+        )
+    finally:
+        conn.close()
+
+
+def add_dnd_numbers_bulk(org_id: int, phones: list, source: str = 'manual') -> int:
+    """Bulk insert phones into DND list. Returns count of newly added numbers."""
+    if not phones:
+        return 0
+    normalized = list({normalize_phone(p) for p in phones if p and p.strip()})
+    if not normalized:
+        return 0
+    conn = get_conn()
+    cursor = conn.cursor()
+    try:
+        values = [(org_id, p, source) for p in normalized]
+        cursor.executemany(
+            "INSERT IGNORE INTO dnd_numbers (org_id, phone, source) VALUES (%s, %s, %s)",
+            values
+        )
+        return cursor.rowcount
+    finally:
+        conn.close()
+
+
+def is_dnd_number(org_id: int, phone: str) -> bool:
+    phone = normalize_phone(phone)
+    conn = get_conn()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "SELECT 1 FROM dnd_numbers WHERE org_id = %s AND phone = %s LIMIT 1",
+            (org_id, phone)
+        )
+        return cursor.fetchone() is not None
+    finally:
+        conn.close()
+
+
+def remove_dnd_number(org_id: int, phone: str):
+    phone = normalize_phone(phone)
+    conn = get_conn()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "DELETE FROM dnd_numbers WHERE org_id = %s AND phone = %s",
+            (org_id, phone)
+        )
+    finally:
+        conn.close()
+
+
+def get_dnd_count(org_id: int) -> int:
+    conn = get_conn()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT COUNT(*) as cnt FROM dnd_numbers WHERE org_id = %s", (org_id,))
+        return cursor.fetchone()['cnt']
+    finally:
+        conn.close()
+
+
+def get_dnd_numbers(org_id: int, limit: int = 100, offset: int = 0) -> List[Dict]:
+    conn = get_conn()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "SELECT * FROM dnd_numbers WHERE org_id = %s ORDER BY added_at DESC LIMIT %s OFFSET %s",
+            (org_id, limit, offset)
+        )
+        return cursor.fetchall()
+    finally:
+        conn.close()
+
 
 def get_all_leads(org_id: int) -> List[Dict]:
     conn = get_conn()

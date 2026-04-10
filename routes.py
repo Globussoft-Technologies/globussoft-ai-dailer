@@ -45,6 +45,8 @@ from database import (
     get_retries_by_campaign,
     get_language_analytics, get_scored_leads,
     create_webhook, get_webhooks_by_org, delete_webhook, get_webhook_logs,
+    add_dnd_number, add_dnd_numbers_bulk, is_dnd_number, remove_dnd_number,
+    get_dnd_count, get_dnd_numbers,
 )
 import rag
 from email_service import send_email, _wrap_html
@@ -1258,6 +1260,61 @@ def api_delete_webhook(webhook_id: int, current_user: dict = Depends(get_current
 @api_router.get("/api/webhooks/{webhook_id}/logs")
 def api_get_webhook_logs(webhook_id: int, current_user: dict = Depends(get_current_user)):
     return get_webhook_logs(webhook_id)
+
+
+# --- DND (Do Not Disturb) List ---
+
+class DndAddRequest(BaseModel):
+    phone: str
+    source: Optional[str] = "manual"
+
+@api_router.get("/api/dnd")
+def api_get_dnd_list(
+    page: int = 1, limit: int = 100,
+    current_user: dict = Depends(get_current_user),
+):
+    org_id = current_user.get("org_id")
+    offset = (page - 1) * limit
+    numbers = get_dnd_numbers(org_id, limit=limit, offset=offset)
+    total = get_dnd_count(org_id)
+    return {"numbers": numbers, "total": total, "page": page, "limit": limit}
+
+@api_router.post("/api/dnd")
+def api_add_dnd_number(data: DndAddRequest, current_user: dict = Depends(get_current_user)):
+    org_id = current_user.get("org_id")
+    add_dnd_number(org_id, data.phone, data.source or "manual")
+    return {"ok": True, "message": f"Added {data.phone} to DND list"}
+
+@api_router.post("/api/dnd/import")
+async def api_import_dnd_csv(
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user),
+):
+    org_id = current_user.get("org_id")
+    content = (await file.read()).decode("utf-8", errors="ignore")
+    reader = csv.DictReader(io.StringIO(content))
+    phones = []
+    for row in reader:
+        # Accept "phone" or "Phone" or "PHONE" column
+        phone = row.get("phone") or row.get("Phone") or row.get("PHONE") or ""
+        if phone.strip():
+            phones.append(phone.strip())
+    if not phones:
+        return {"ok": False, "message": "No phone numbers found in CSV. Ensure there is a 'phone' column."}
+    added = add_dnd_numbers_bulk(org_id, phones, source="manual")
+    return {"ok": True, "added": added, "total_in_file": len(phones)}
+
+@api_router.delete("/api/dnd/{phone}")
+def api_remove_dnd_number(phone: str, current_user: dict = Depends(get_current_user)):
+    org_id = current_user.get("org_id")
+    remove_dnd_number(org_id, phone)
+    return {"ok": True, "message": f"Removed {phone} from DND list"}
+
+@api_router.get("/api/dnd/check/{phone}")
+def api_check_dnd(phone: str, current_user: dict = Depends(get_current_user)):
+    org_id = current_user.get("org_id")
+    on_dnd = is_dnd_number(org_id, phone)
+    return {"phone": phone, "is_dnd": on_dnd}
 
 
 # --- Mobile API ---

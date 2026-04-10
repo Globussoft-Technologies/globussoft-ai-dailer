@@ -8,6 +8,7 @@ import logging
 from database import (
     get_pending_retries, update_retry_status,
     get_campaign_by_id, get_campaign_voice_settings,
+    is_dnd_number,
 )
 
 logger = logging.getLogger("uvicorn.error")
@@ -37,6 +38,19 @@ async def retry_worker_loop():
                 campaign_id = retry.get("campaign_id")
                 attempt = retry["attempt_number"]
                 max_attempts = retry["max_attempts"]
+
+                # Skip DND numbers
+                org_id = retry.get("org_id")
+                if org_id and is_dnd_number(org_id, retry.get("phone", "")):
+                    update_retry_status(retry_id, "cancelled", attempt)
+                    logger.info(f"[RETRY-WORKER] Cancelled retry {retry_id} for lead {lead_id} — DND number")
+                    if campaign_id:
+                        emit_campaign_event(
+                            campaign_id, retry.get("first_name", "Lead"),
+                            retry.get("phone", ""), "dnd_skipped",
+                            "DND list — retry cancelled"
+                        )
+                    continue
 
                 # If this attempt would exceed max, mark exhausted
                 if attempt >= max_attempts:

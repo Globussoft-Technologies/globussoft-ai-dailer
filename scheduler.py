@@ -5,7 +5,7 @@ and initiates them via the existing dial system.
 """
 import asyncio
 import logging
-from database import get_pending_scheduled_calls, update_scheduled_call_status, get_campaign_by_id, get_campaign_voice_settings
+from database import get_pending_scheduled_calls, update_scheduled_call_status, get_campaign_by_id, get_campaign_voice_settings, is_dnd_number
 from dial_routes import initiate_call, DEFAULT_PROVIDER
 
 logger = logging.getLogger("uvicorn.error")
@@ -18,6 +18,11 @@ async def run_scheduler():
             pending = get_pending_scheduled_calls()
             for sc in pending:
                 try:
+                    # Skip DND numbers
+                    if sc.get("org_id") and is_dnd_number(sc["org_id"], sc["phone"]):
+                        update_scheduled_call_status(sc["id"], "cancelled")
+                        logger.info(f"[SCHEDULER] Cancelled scheduled call {sc['id']} — DND number: {sc['phone']}")
+                        continue
                     update_scheduled_call_status(sc["id"], "dialing")
                     call_data = {
                         "name": sc["first_name"],

@@ -10,7 +10,7 @@ import time
 import logging
 import httpx
 
-from database import save_call_transcript, save_call_review, create_retry, has_pending_or_exhausted_retry, get_conn, get_lead_by_id
+from database import save_call_transcript, save_call_review, create_retry, has_pending_or_exhausted_retry, get_conn, get_lead_by_id, add_dnd_number
 from webhook_dispatch import dispatch_webhook
 
 
@@ -309,6 +309,27 @@ Return ONLY the JSON object, no markdown, no explanation."""
         analysis = json.loads(text)
         save_call_review(transcript_id, campaign_id, lead_id, analysis)
         logger.info(f"[CALL_ANALYSIS] Saved review for transcript {transcript_id}: score={analysis.get('quality_score')}, sentiment={analysis.get('customer_sentiment')}")
+
+        # --- Auto-add to DND if customer requested no more calls ---
+        try:
+            failure_reason = (analysis.get("failure_reason") or "").lower()
+            sentiment = (analysis.get("customer_sentiment") or "").lower()
+            transcript_text_lower = transcript_text.lower()
+            should_dnd = False
+            if any(phrase in failure_reason for phrase in ["do not call", "dnd", "don't call", "stop calling"]):
+                should_dnd = True
+            if sentiment in ("negative", "annoyed") and any(phrase in transcript_text_lower for phrase in [
+                "don't call me", "do not call", "stop calling", "don't call again",
+                "mat call karo", "call mat karo", "phone mat karo",
+            ]):
+                should_dnd = True
+            if should_dnd:
+                lead_info = get_lead_by_id(lead_id)
+                if lead_info and lead_info.get("org_id") and lead_info.get("phone"):
+                    add_dnd_number(lead_info["org_id"], lead_info["phone"], source="customer_request")
+                    logger.info(f"[DND] Auto-added lead {lead_id} ({lead_info['phone']}) to DND — customer requested no calls")
+        except Exception as dnd_err:
+            logger.error(f"[DND] Auto-add error for lead {lead_id}: {dnd_err}")
 
         # --- WhatsApp follow-up for booked appointments ---
         if analysis.get("appointment_booked"):
