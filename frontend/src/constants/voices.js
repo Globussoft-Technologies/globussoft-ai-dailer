@@ -11,6 +11,26 @@ export const INDIAN_LANGUAGES = [
   { code: 'en', name: 'English' },
 ];
 
+// Per-language voice recommendations (tested for quality/naturalness)
+export const VOICE_RECOMMENDATIONS = {
+  bn: {
+    sarvam: {
+      top: ['amit', 'advait', 'manan', 'aayan', 'neha', 'roopa', 'ishita', 'pooja'],
+      note: 'All 23 Sarvam voices support Bengali. Top picks have the most natural prosody.',
+    },
+    smallest: {
+      top: ['arnav', 'saurabh', 'kajal', 'pragya'],
+      note: 'SmallestAI voices also support Bengali.',
+    },
+  },
+  mr: {
+    sarvam: {
+      top: ['kabir', 'amit', 'rohan', 'priya', 'neha'],
+      note: 'Best tested voices for Marathi campaigns.',
+    },
+  },
+};
+
 export const INDIAN_VOICES = {
   elevenlabs: [
     { id: 'oH8YmZXJYEZq5ScgoGn9', name: 'Aakash – Friendly Support' },

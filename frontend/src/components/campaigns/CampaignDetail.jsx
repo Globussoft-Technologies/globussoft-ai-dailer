@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { formatDateTime } from '../../utils/dateFormat';
+import { VOICE_RECOMMENDATIONS } from '../../constants/voices';
 
 export default function CampaignDetail({
   selectedCampaign, setSelectedCampaign,
@@ -122,9 +123,21 @@ export default function CampaignDetail({
             onChange={e => setCampVoice(v => ({...v, tts_voice_id: e.target.value}))}
             style={{width: 'auto', height: '32px', fontSize: '0.8rem', padding: '4px 8px', minWidth: '160px'}}>
             <option value="">-- Voice --</option>
-            {(INDIAN_VOICES[campVoice.tts_provider] || []).map(v => (
-              <option key={v.id} value={v.id}>{v.name}</option>
-            ))}
+            {(() => {
+              const recs = VOICE_RECOMMENDATIONS[campVoice.tts_language]?.[campVoice.tts_provider]?.top || [];
+              const voices = INDIAN_VOICES[campVoice.tts_provider] || [];
+              const recommended = voices.filter(v => recs.includes(v.id));
+              const others = voices.filter(v => !recs.includes(v.id));
+              return (<>
+                {recommended.length > 0 && <optgroup label="★ Recommended">
+                  {recommended.map(v => <option key={v.id} value={v.id}>★ {v.name}</option>)}
+                </optgroup>}
+                {recommended.length > 0 && <optgroup label="All Voices">
+                  {others.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+                </optgroup>}
+                {recommended.length === 0 && voices.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+              </>);
+            })()}
           </select>
           <select className="form-input" value={campVoice.tts_language}
             onChange={e => setCampVoice(v => ({...v, tts_language: e.target.value}))}
@@ -144,6 +157,11 @@ export default function CampaignDetail({
             ? `Current: ${campVoice.tts_provider === 'elevenlabs' ? 'ElevenLabs' : campVoice.tts_provider === 'sarvam' ? 'Sarvam AI' : 'Smallest AI'} - ${(INDIAN_VOICES[campVoice.tts_provider] || []).find(v => v.id === campVoice.tts_voice_id)?.name || campVoice.tts_voice_id || 'none'}`
             : 'Using org default'}
         </div>
+        {VOICE_RECOMMENDATIONS[campVoice.tts_language]?.[campVoice.tts_provider]?.note && (
+          <div style={{fontSize: '0.65rem', color: '#22d3ee', marginTop: '4px'}}>
+            ℹ {VOICE_RECOMMENDATIONS[campVoice.tts_language][campVoice.tts_provider].note}
+          </div>
+        )}
       </div>
 
       {/* Live Dial Events Feed */}
