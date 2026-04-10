@@ -43,6 +43,7 @@ from database import (
     create_demo_request, get_all_demo_requests,
     create_scheduled_call, get_scheduled_calls_by_org, update_scheduled_call_status,
     get_retries_by_campaign,
+    create_webhook, get_webhooks_by_org, delete_webhook, get_webhook_logs,
 )
 import rag
 from email_service import send_email, _wrap_html
@@ -1213,6 +1214,38 @@ def api_test_email(data: TestEmailRequest, current_user: dict = Depends(get_curr
     if ok:
         return {"ok": True, "message": f"Test email sent to {data.to}"}
     raise HTTPException(500, "Failed to send test email. Check SMTP configuration.")
+
+# ─── Webhooks ────────────────────────────────────────────────────────────────
+
+class WebhookCreate(BaseModel):
+    url: str
+    events: List[str]
+    secret: Optional[str] = None
+
+@api_router.post("/api/webhooks")
+def api_create_webhook(data: WebhookCreate, current_user: dict = Depends(get_current_user)):
+    org_id = current_user.get("org_id")
+    valid_events = {"call.completed", "appointment.booked", "payment.captured"}
+    invalid = set(data.events) - valid_events
+    if invalid:
+        raise HTTPException(400, f"Invalid events: {', '.join(invalid)}. Valid: {', '.join(valid_events)}")
+    wh_id = create_webhook(org_id, data.url, data.events, data.secret)
+    return {"ok": True, "id": wh_id}
+
+@api_router.get("/api/webhooks")
+def api_get_webhooks(current_user: dict = Depends(get_current_user)):
+    org_id = current_user.get("org_id")
+    return get_webhooks_by_org(org_id)
+
+@api_router.delete("/api/webhooks/{webhook_id}")
+def api_delete_webhook(webhook_id: int, current_user: dict = Depends(get_current_user)):
+    delete_webhook(webhook_id)
+    return {"ok": True}
+
+@api_router.get("/api/webhooks/{webhook_id}/logs")
+def api_get_webhook_logs(webhook_id: int, current_user: dict = Depends(get_current_user)):
+    return get_webhook_logs(webhook_id)
+
 
 # --- Mobile API ---
 

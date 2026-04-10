@@ -365,6 +365,32 @@ def init_db():
         )
     ''')
 
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS webhooks (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            org_id INT NOT NULL,
+            url TEXT NOT NULL,
+            events JSON NOT NULL,
+            secret VARCHAR(255),
+            is_active BOOLEAN DEFAULT TRUE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (org_id) REFERENCES organizations (id) ON DELETE CASCADE
+        )
+    ''')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS webhook_logs (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            webhook_id INT NOT NULL,
+            event VARCHAR(100) NOT NULL,
+            payload JSON,
+            response_status INT,
+            response_body TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (webhook_id) REFERENCES webhooks (id) ON DELETE CASCADE
+        )
+    ''')
+
     conn.close()
 
 def get_all_leads(org_id: int) -> List[Dict]:
@@ -1679,3 +1705,76 @@ def has_pending_or_exhausted_retry(lead_id: int) -> Dict:
         'attempt_number': row['attempt_number'],
         'max_attempts': row['max_attempts'],
     }
+
+
+# ─── Webhooks ───────────────────────────────────────────────────────────────
+
+def create_webhook(org_id: int, url: str, events: list, secret: str = None) -> int:
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO webhooks (org_id, url, events, secret) VALUES (%s, %s, %s, %s)",
+        (org_id, url, json.dumps(events), secret)
+    )
+    last_id = cursor.lastrowid
+    conn.close()
+    return last_id
+
+
+def get_webhooks_by_org(org_id: int) -> List[Dict]:
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, org_id, url, events, is_active, created_at FROM webhooks WHERE org_id = %s ORDER BY id DESC", (org_id,))
+    rows = cursor.fetchall()
+    conn.close()
+    for r in rows:
+        if r.get('events') and isinstance(r['events'], str):
+            r['events'] = json.loads(r['events'])
+    return rows
+
+
+def delete_webhook(webhook_id: int):
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM webhooks WHERE id = %s", (webhook_id,))
+    conn.close()
+
+
+def get_active_webhooks_for_event(org_id: int, event: str) -> List[Dict]:
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT * FROM webhooks WHERE org_id = %s AND is_active = TRUE AND JSON_CONTAINS(events, %s)",
+        (org_id, json.dumps(event))
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    for r in rows:
+        if r.get('events') and isinstance(r['events'], str):
+            r['events'] = json.loads(r['events'])
+    return rows
+
+
+def log_webhook_delivery(webhook_id: int, event: str, payload: dict, response_status: int, response_body: str):
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO webhook_logs (webhook_id, event, payload, response_status, response_body) VALUES (%s, %s, %s, %s, %s)",
+        (webhook_id, event, json.dumps(payload, ensure_ascii=False), response_status, response_body[:2000] if response_body else None)
+    )
+    conn.close()
+
+
+def get_webhook_logs(webhook_id: int, limit: int = 50) -> List[Dict]:
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT * FROM webhook_logs WHERE webhook_id = %s ORDER BY created_at DESC LIMIT %s",
+        (webhook_id, limit)
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    for r in rows:
+        if r.get('payload') and isinstance(r['payload'], str):
+            r['payload'] = json.loads(r['payload'])
+    return rows

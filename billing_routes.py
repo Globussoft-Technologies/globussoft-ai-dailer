@@ -1,6 +1,7 @@
 """
 billing_routes.py — API routes for Callified billing.
 """
+import asyncio
 from fastapi import APIRouter, Depends, Request, HTTPException
 from pydantic import BaseModel
 from typing import Optional
@@ -12,6 +13,7 @@ from billing import (
     create_razorpay_order, verify_razorpay_payment, handle_razorpay_webhook,
 )
 from email_service import send_payment_receipt
+from webhook_dispatch import dispatch_webhook
 import logging
 
 logger = logging.getLogger("uvicorn.error")
@@ -118,6 +120,20 @@ def api_verify_payment(data: PaymentVerify, current_user: dict = Depends(get_cur
                 send_payment_receipt(user_email, user_name, plan_name, amount_inr, data.razorpay_payment_id)
             except Exception as e:
                 logger.error(f"[BILLING] Payment receipt email failed: {e}")
+            # Dispatch payment.captured webhook
+            try:
+                plan = plan or get_plan(data.plan_id)
+                asyncio.create_task(dispatch_webhook(
+                    org_id=org_id,
+                    event="payment.captured",
+                    data={
+                        "plan_name": plan.get("name", "Plan") if plan else "Plan",
+                        "amount": (plan.get("price_paise", 0) / 100) if plan else 0,
+                        "payment_id": data.razorpay_payment_id,
+                    },
+                ))
+            except Exception as e:
+                logger.error(f"[WEBHOOK] payment.captured dispatch error: {e}")
         return result
     except ValueError as e:
         raise HTTPException(400, str(e))

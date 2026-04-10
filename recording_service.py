@@ -10,7 +10,8 @@ import time
 import logging
 import httpx
 
-from database import save_call_transcript, save_call_review, create_retry, has_pending_or_exhausted_retry, get_conn
+from database import save_call_transcript, save_call_review, create_retry, has_pending_or_exhausted_retry, get_conn, get_lead_by_id
+from webhook_dispatch import dispatch_webhook
 
 
 async def save_call_recording_and_transcript(
@@ -188,6 +189,30 @@ async def save_call_recording_and_transcript(
             campaign_id=_campaign_id,
         )
 
+        # --- Dispatch call.completed webhook ---
+        try:
+            lead_info = get_lead_by_id(_call_lead_id)
+            if lead_info:
+                _rc2 = get_conn()
+                _rcur2 = _rc2.cursor()
+                _rcur2.execute("SELECT org_id FROM leads WHERE id = %s", (_call_lead_id,))
+                _lead_org = _rcur2.fetchone()
+                _rc2.close()
+                if _lead_org and _lead_org.get('org_id'):
+                    asyncio.create_task(dispatch_webhook(
+                        org_id=_lead_org['org_id'],
+                        event="call.completed",
+                        data={
+                            "lead_id": _call_lead_id,
+                            "lead_name": f"{lead_info.get('first_name', '')} {lead_info.get('last_name', '')}".strip(),
+                            "phone": lead_info.get('phone', ''),
+                            "duration": call_duration,
+                            "campaign_id": _campaign_id,
+                        },
+                    ))
+        except Exception as _wh_err:
+            ws_logger.error(f"[WEBHOOK] call.completed dispatch error: {_wh_err}")
+
         # --- Background call analysis with Gemini ---
         if transcript_id and _campaign_id and call_duration > 5:
             asyncio.ensure_future(_analyze_call_transcript(
@@ -284,5 +309,23 @@ Return ONLY the JSON object, no markdown, no explanation."""
         analysis = json.loads(text)
         save_call_review(transcript_id, campaign_id, lead_id, analysis)
         logger.info(f"[CALL_ANALYSIS] Saved review for transcript {transcript_id}: score={analysis.get('quality_score')}, sentiment={analysis.get('customer_sentiment')}")
+
+        # --- Dispatch appointment.booked webhook ---
+        if analysis.get('appointment_booked'):
+            try:
+                lead_info = get_lead_by_id(lead_id)
+                if lead_info and lead_info.get('org_id'):
+                    await dispatch_webhook(
+                        org_id=lead_info['org_id'],
+                        event="appointment.booked",
+                        data={
+                            "lead_id": lead_id,
+                            "lead_name": f"{lead_info.get('first_name', '')} {lead_info.get('last_name', '')}".strip(),
+                            "phone": lead_info.get('phone', ''),
+                            "campaign_id": campaign_id,
+                        },
+                    )
+            except Exception as _wh_err:
+                logger.error(f"[WEBHOOK] appointment.booked dispatch error: {_wh_err}")
     except Exception as e:
         logger.error(f"[CALL_ANALYSIS] Failed for transcript {transcript_id}: {e}")
