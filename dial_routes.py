@@ -15,6 +15,7 @@ import call_logger
 import redis_store
 from database import get_lead_by_id, update_lead_status, save_call_transcript
 from billing import get_usage_summary
+from call_guard import is_calling_allowed, get_next_allowed_time, get_org_timezone
 
 # ─── Telephony Config ────────────────────────────────────────────────────────
 
@@ -148,8 +149,14 @@ async def api_dial_lead(lead_id: int, background_tasks: BackgroundTasks):
     lead = get_lead_by_id(lead_id)
     if not lead:
         return {"status": "error", "message": "Lead not found"}
-    # Enforce plan minute limits
+    # Enforce TRAI calling hours (9 AM - 9 PM)
     org_id = lead.get("org_id")
+    tz = get_org_timezone(org_id)
+    guard = is_calling_allowed(tz)
+    if not guard["allowed"]:
+        next_time = get_next_allowed_time(tz)
+        return {"status": "error", "message": f"Calling not allowed at this hour. TRAI rules: calls only between 9 AM - 9 PM. Next allowed: {next_time}"}
+    # Enforce plan minute limits
     if org_id:
         try:
             usage = get_usage_summary(org_id)
@@ -173,8 +180,14 @@ async def api_campaign_dial_lead(campaign_id: int, lead_id: int, background_task
         return {"status": "error", "message": "Lead not found"}
     if not campaign:
         return {"status": "error", "message": "Campaign not found"}
-    # Enforce plan minute limits
+    # Enforce TRAI calling hours (9 AM - 9 PM)
     org_id = campaign.get("org_id")
+    tz = get_org_timezone(org_id)
+    guard = is_calling_allowed(tz)
+    if not guard["allowed"]:
+        next_time = get_next_allowed_time(tz)
+        return {"status": "error", "message": f"Calling not allowed at this hour. TRAI rules: calls only between 9 AM - 9 PM. Next allowed: {next_time}"}
+    # Enforce plan minute limits
     if org_id:
         try:
             usage = get_usage_summary(org_id)
@@ -208,8 +221,14 @@ async def api_campaign_redial_failed(campaign_id: int, background_tasks: Backgro
     campaign = get_campaign_by_id(campaign_id)
     if not campaign:
         return {"status": "error", "message": "Campaign not found"}
-    # Enforce plan minute limits
+    # Enforce TRAI calling hours (9 AM - 9 PM)
     org_id = campaign.get("org_id")
+    tz = get_org_timezone(org_id)
+    guard = is_calling_allowed(tz)
+    if not guard["allowed"]:
+        next_time = get_next_allowed_time(tz)
+        return {"status": "error", "message": f"Calling not allowed at this hour. TRAI rules: calls only between 9 AM - 9 PM. Next allowed: {next_time}"}
+    # Enforce plan minute limits
     if org_id:
         try:
             usage = get_usage_summary(org_id)
@@ -265,8 +284,14 @@ async def api_campaign_dial_all(campaign_id: int, background_tasks: BackgroundTa
     campaign = get_campaign_by_id(campaign_id)
     if not campaign:
         return {"status": "error", "message": "Campaign not found"}
-    # Enforce plan minute limits
+    # Enforce TRAI calling hours (9 AM - 9 PM)
     org_id = campaign.get("org_id")
+    tz = get_org_timezone(org_id)
+    guard = is_calling_allowed(tz)
+    if not guard["allowed"]:
+        next_time = get_next_allowed_time(tz)
+        return {"status": "error", "message": f"Calling not allowed at this hour. TRAI rules: calls only between 9 AM - 9 PM. Next allowed: {next_time}"}
+    # Enforce plan minute limits
     if org_id:
         try:
             usage = get_usage_summary(org_id)

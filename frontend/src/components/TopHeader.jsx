@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 
 export default function TopHeader({
@@ -9,6 +9,22 @@ export default function TopHeader({
   const navigate = useNavigate();
   const location = useLocation();
   const activeTab = location.pathname.replace('/', '') || 'crm';
+
+  const [callingStatus, setCallingStatus] = useState(null);
+
+  useEffect(() => {
+    const fetchStatus = () => {
+      const token = localStorage.getItem('token');
+      if (!token) return;
+      fetch('/api/calling-status', { headers: { Authorization: `Bearer ${token}` } })
+        .then(r => r.json())
+        .then(data => setCallingStatus(data))
+        .catch(() => {});
+    };
+    fetchStatus();
+    const interval = setInterval(fetchStatus, 60000);
+    return () => clearInterval(interval);
+  }, []);
 
   return (
     <header className="header" style={{display: 'flex', flexWrap: 'wrap', gap: '1rem', alignItems: 'center'}}>
@@ -33,6 +49,28 @@ export default function TopHeader({
         {userRole === 'Admin' && <button data-testid="tab-logs" className={`tab-btn ${activeTab === 'logs' ? 'active' : ''}`} onClick={() => navigate('/logs')}>📋 Live Logs</button>}
 
         <div style={{marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '12px'}}>
+          {callingStatus && (
+            <span style={{
+              fontSize: '0.75rem',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '4px 10px',
+              borderRadius: '6px',
+              background: callingStatus.allowed ? 'rgba(34, 197, 94, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+              border: `1px solid ${callingStatus.allowed ? 'rgba(34, 197, 94, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`,
+              color: callingStatus.allowed ? '#4ade80' : '#fca5a5',
+              fontWeight: 600,
+              whiteSpace: 'nowrap',
+            }}>
+              <span style={{
+                width: '8px', height: '8px', borderRadius: '50%',
+                background: callingStatus.allowed ? '#22c55e' : '#ef4444',
+                display: 'inline-block',
+              }} />
+              {callingStatus.allowed ? 'Calls Active' : 'Calls Paused (TRAI: 9AM-9PM)'}
+            </span>
+          )}
           {currentUser && (
             <span style={{fontSize: '0.8rem', color: '#94a3b8', letterSpacing: '0.5px'}}>
               👤 {currentUser.full_name || currentUser.email} {currentUser.org_name ? `(${currentUser.org_name})` : ''}

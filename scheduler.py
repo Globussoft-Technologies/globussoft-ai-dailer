@@ -7,6 +7,7 @@ import asyncio
 import logging
 from database import get_pending_scheduled_calls, update_scheduled_call_status, get_campaign_by_id, get_campaign_voice_settings
 from dial_routes import initiate_call, DEFAULT_PROVIDER
+from call_guard import is_calling_allowed, get_org_timezone
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -16,7 +17,13 @@ async def run_scheduler():
     while True:
         try:
             pending = get_pending_scheduled_calls()
+            # Check TRAI calling hours before processing any calls
             for sc in pending:
+                tz = get_org_timezone(sc.get("org_id"))
+                guard = is_calling_allowed(tz)
+                if not guard["allowed"]:
+                    logger.info(f"[SCHEDULER] Scheduled call {sc['id']} deferred — outside calling hours ({guard['current_time']} {tz})")
+                    continue
                 try:
                     update_scheduled_call_status(sc["id"], "dialing")
                     call_data = {

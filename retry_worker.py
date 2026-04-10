@@ -9,6 +9,7 @@ from database import (
     get_pending_retries, update_retry_status,
     get_campaign_by_id, get_campaign_voice_settings,
 )
+from call_guard import is_calling_allowed, get_org_timezone
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -30,6 +31,21 @@ async def retry_worker_loop():
             pending = get_pending_retries()
             if pending:
                 logger.info(f"[RETRY-WORKER] Found {len(pending)} due retries")
+
+            # Check TRAI calling hours before processing retries
+            if pending:
+                # Use org timezone from first retry's campaign, or default
+                sample_org_id = None
+                sample_campaign = pending[0].get("campaign_id")
+                if sample_campaign:
+                    c = get_campaign_by_id(sample_campaign)
+                    if c:
+                        sample_org_id = c.get("org_id")
+                tz = get_org_timezone(sample_org_id)
+                guard = is_calling_allowed(tz)
+                if not guard["allowed"]:
+                    logger.info(f"[RETRY-WORKER] {len(pending)} retries deferred — outside calling hours ({guard['current_time']} {tz})")
+                    pending = []  # Skip all retries this cycle
 
             for retry in pending:
                 retry_id = retry["id"]

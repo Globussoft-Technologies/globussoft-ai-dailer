@@ -495,6 +495,18 @@ def api_get_scored_leads(current_user: dict = Depends(get_current_user)):
 def api_get_whatsapp(current_user: dict = Depends(get_current_user)):
     return get_all_whatsapp_logs(current_user.get("org_id"))
 
+# --- Calling Status (TRAI hours) ---
+@api_router.get("/api/calling-status")
+def api_calling_status(current_user: dict = Depends(get_current_user)):
+    """Check if calling is currently allowed under TRAI rules (9 AM - 9 PM)."""
+    from call_guard import is_calling_allowed, get_next_allowed_time, get_org_timezone
+    org_id = current_user.get("org_id")
+    tz = get_org_timezone(org_id)
+    result = is_calling_allowed(tz)
+    if not result["allowed"]:
+        result["next_allowed"] = get_next_allowed_time(tz)
+    return result
+
 # --- Sites & Punch ---
 
 @api_router.get("/api/sites")
