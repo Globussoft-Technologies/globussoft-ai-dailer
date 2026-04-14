@@ -12,7 +12,7 @@ import os
 DB_CONFIG = {
     'host': os.getenv('MYSQL_HOST', 'localhost'),
     'user': os.getenv('MYSQL_USER', 'callified'),
-    'password': os.getenv('MYSQL_PASSWORD', 'Callified@2026'),
+    'password': os.getenv('MYSQL_PASSWORD', ''),
     'database': os.getenv('MYSQL_DATABASE', 'callified_ai'),
     'charset': 'utf8mb4',
     'cursorclass': pymysql.cursors.DictCursor,

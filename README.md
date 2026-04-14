@@ -292,7 +292,7 @@ docker compose --env-file .env.docker up --build app
 | MySQL 8.0 | 3306 | **3307** |
 | Redis 7 | 6379 | **6380** |
 
-Connect to MySQL locally: `mysql -h 127.0.0.1 -P 3307 -u callified -pCallified@2026 callified_ai`
+Connect to MySQL locally: `mysql -h 127.0.0.1 -P 3307 -u callified -p<YOUR_MYSQL_PASSWORD> callified_ai`
 
 ---
 
