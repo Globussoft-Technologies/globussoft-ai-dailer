@@ -202,10 +202,12 @@ The fastest way to run the full stack locally — no manual MySQL/Redis setup re
 ### 1. Copy the environment template
 
 ```bash
-cp .env.docker .env.docker.local
+cp .env.example .env.docker
 ```
 
-Edit `.env.docker.local` and fill in your real API keys (Groq/Gemini, Deepgram, ElevenLabs, Twilio/Exotel). The internal service hostnames (`MYSQL_HOST=db`, `REDIS_URL=redis://:localredis123@redis:6379/1`) are pre-wired for docker-compose and should not be changed.
+Edit `.env.docker` and fill in your real API keys (Gemini/Groq, Deepgram, ElevenLabs, Twilio/Exotel) and passwords. The internal service hostnames (`MYSQL_HOST=db`, `REDIS_URL=redis://:...@redis:6379/1`) are pre-wired for docker-compose and should not be changed.
+
+> `.env.example` contains all required variables with placeholder values. It is safe to commit. Never commit `.env.docker` — it is gitignored.
 
 ### 2. Build and start all services
 
