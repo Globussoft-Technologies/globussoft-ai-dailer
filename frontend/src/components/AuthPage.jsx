@@ -54,10 +54,7 @@ export default function AuthPage() {
     }}>
       <div style={{ width: '100%', maxWidth: '440px' }}>
         <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
-          <h1 style={{ fontSize: '2rem', fontWeight: 800, background: 'linear-gradient(135deg, #a78bfa, #22d3ee)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-            🤖 Callified AI
-          </h1>
-          <p style={{ color: '#94a3b8', fontSize: '0.95rem' }}>AI-Powered Lead Qualification Platform</p>
+          <img src="/login_logo.png" alt="Callified AI" style={{ maxWidth: '240px', width: '100%', height: 'auto' }} />
           <span style={{ display: 'none' }} data-version="2.0.1" />
         </div>
 
