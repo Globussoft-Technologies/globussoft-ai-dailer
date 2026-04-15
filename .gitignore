@@ -71,6 +71,10 @@ recordings/
 deploy.zip
 deploy.tar.gz
 
+# SSH keys
+*.pem
+*.key
+
 # Local docs (not for repo)
 DEPLOYMENT.md
 server-missing-files.md
