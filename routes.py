@@ -54,6 +54,32 @@ from database import (
 import rag
 from email_service import send_email, _wrap_html
 
+# ─── Ownership Guard Helpers ────────────────────────────────────────────────
+
+def _get_lead_or_403(lead_id: int, org_id: int) -> dict:
+    lead = get_lead_by_id(lead_id)
+    if not lead or lead.get("org_id") != org_id:
+        raise HTTPException(status_code=403, detail="Lead not found or access denied")
+    return lead
+
+def _get_campaign_or_403(campaign_id: int, org_id: int) -> dict:
+    from database import get_campaign_by_id as _gcbi
+    campaign = _gcbi(campaign_id, org_id)
+    if not campaign:
+        raise HTTPException(status_code=403, detail="Campaign not found or access denied")
+    return campaign
+
+def _get_product_or_403(product_id: int, org_id: int) -> dict:
+    from database import get_conn as _gc
+    conn = _gc()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM products WHERE id = %s AND org_id = %s", (product_id, org_id))
+    product = cursor.fetchone()
+    conn.close()
+    if not product:
+        raise HTTPException(status_code=403, detail="Product not found or access denied")
+    return product
+
 # ─── Pydantic Models ────────────────────────────────────────────────────────
 
 class LeadCreate(BaseModel):
@@ -182,7 +208,9 @@ def api_get_demo_requests(current_user: dict = Depends(get_current_user)):
     return get_all_demo_requests()
 
 @api_router.get("/api/debug/logs")
-def api_fetch_logs():
+def api_fetch_logs(current_user: dict = Depends(get_current_user)):
+    if current_user.get("role") != "Admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
     import subprocess
     try:
         res = subprocess.run(["journalctl", "-u", "callified-ai.service", "-n", "150", "--no-pager"], capture_output=True, text=True)
@@ -293,17 +321,23 @@ def api_delete_lead(lead_id: int, current_user: dict = Depends(get_current_user)
 
 @api_router.put("/api/leads/{lead_id}/status")
 def api_update_lead_status(lead_id: int, payload: LeadStatusUpdate, current_user: dict = Depends(get_current_user)):
-    update_lead_status(lead_id, payload.status)
+    org_id = current_user.get("org_id")
+    result = update_lead_status(lead_id, payload.status, org_id)
+    if result is False:
+        raise HTTPException(status_code=403, detail="Lead not found or access denied")
     return {"status": "success", "message": f"Lead {lead_id} updated to {payload.status}"}
 
 @api_router.post("/api/leads/{lead_id}/notes")
 def api_update_lead_note(lead_id: int, payload: NoteCreate, current_user: dict = Depends(get_current_user)):
-    update_lead_note(lead_id, payload.note)
+    org_id = current_user.get("org_id")
+    result = update_lead_note(lead_id, payload.note, org_id)
+    if result is False:
+        raise HTTPException(status_code=403, detail="Lead not found or access denied")
     return {"status": "success"}
 
 @api_router.get("/api/leads/{lead_id}/draft-email")
 def api_draft_email(lead_id: int, current_user: dict = Depends(get_current_user)):
-    lead = get_lead_by_id(lead_id)
+    lead = _get_lead_or_403(lead_id, current_user.get("org_id"))
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
     note = lead.get("follow_up_note")
@@ -336,7 +370,7 @@ def api_get_tasks(current_user: dict = Depends(get_current_user)):
 
 @api_router.put("/api/tasks/{task_id}/complete")
 def api_complete_task(task_id: int, current_user: dict = Depends(get_current_user)):
-    complete_task(task_id)
+    complete_task(task_id, current_user.get("org_id"))
     return {"status": "success"}
 
 @api_router.get("/api/reports")
@@ -345,7 +379,7 @@ def api_get_reports(current_user: dict = Depends(get_current_user)):
 
 @api_router.get("/api/analytics")
 def api_get_analytics(current_user: dict = Depends(get_current_user)):
-    return get_analytics()
+    return get_analytics(current_user.get("org_id"))
 
 @api_router.get("/api/analytics/dashboard")
 def api_get_analytics_dashboard(current_user: dict = Depends(get_current_user_or_api_key)):
@@ -793,15 +827,18 @@ def api_punch(punch: PunchCreate, current_user: dict = Depends(get_current_user)
 
 @api_router.post("/api/leads/{lead_id}/documents")
 def api_upload_document(lead_id: int, payload: DocumentCreate, current_user: dict = Depends(get_current_user)):
+    _get_lead_or_403(lead_id, current_user.get("org_id"))
     upload_document(lead_id, payload.file_name, payload.file_url)
     return {"status": "success", "message": f"{payload.file_name} uploaded successfully."}
 
 @api_router.get("/api/leads/{lead_id}/documents")
 def api_get_documents(lead_id: int, current_user: dict = Depends(get_current_user)):
+    _get_lead_or_403(lead_id, current_user.get("org_id"))
     return get_documents_by_lead(lead_id)
 
 @api_router.get("/api/leads/{lead_id}/transcripts")
 def api_get_transcripts(lead_id: int, current_user: dict = Depends(get_current_user)):
+    _get_lead_or_403(lead_id, current_user.get("org_id"))
     return get_transcripts_by_lead(lead_id)
 
 # --- Organizations & Products ---
@@ -845,25 +882,25 @@ def api_create_product(org_id: int, payload: dict, current_user: dict = Depends(
 
 @api_router.put("/api/products/{product_id}")
 def api_update_product(product_id: int, payload: dict, current_user: dict = Depends(get_current_user)):
+    org_id = current_user.get("org_id")
+    _get_product_or_403(product_id, org_id)
     fields = {k: v for k, v in payload.items() if k in ('name', 'website_url', 'scraped_info', 'manual_notes')}
     logger.info(f"[API] UPDATE product {product_id}: fields={list(fields.keys())}, user={current_user.get('email')}")
-    update_product(product_id, **fields)
+    update_product(product_id, org_id=org_id, **fields)
     return {"status": "ok"}
 
 @api_router.delete("/api/products/{product_id}")
 def api_delete_product_endpoint(product_id: int, current_user: dict = Depends(get_current_user)):
-    delete_product(product_id)
+    org_id = current_user.get("org_id")
+    _get_product_or_403(product_id, org_id)
+    delete_product(product_id, org_id)
     return {"status": "ok"}
 
 @api_router.post("/api/products/{product_id}/scrape")
 async def api_scrape_product_website(product_id: int, current_user: dict = Depends(get_current_user)):
     import logging
     logger = logging.getLogger("uvicorn.error")
-    conn = __import__('database').get_conn()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM products WHERE id = %s", (product_id,))
-    product = cursor.fetchone()
-    conn.close()
+    product = _get_product_or_403(product_id, current_user.get("org_id"))
     if not product:
         return {"status": "error", "message": "Product not found"}
     url = (product.get('website_url') or '').strip()
@@ -906,10 +943,12 @@ async def api_scrape_product_website(product_id: int, current_user: dict = Depen
 
 @api_router.get("/api/products/{product_id}/prompt")
 def api_get_product_prompt(product_id: int, current_user: dict = Depends(get_current_user)):
+    _get_product_or_403(product_id, current_user.get("org_id"))
     return get_product_prompt(product_id)
 
 @api_router.put("/api/products/{product_id}/prompt")
 def api_save_product_prompt(product_id: int, payload: dict, current_user: dict = Depends(get_current_user)):
+    _get_product_or_403(product_id, current_user.get("org_id"))
     persona = payload.get("agent_persona", "")
     flow = payload.get("call_flow_instructions", "")
     logger.info(f"[API] SAVE prompt for product {product_id}: persona={len(persona)} chars, flow={len(flow)} chars, user={current_user.get('email')}")
@@ -1160,7 +1199,7 @@ async def api_upload_recording(current_user: dict = Depends(get_current_user), f
     return {"status": "ok", "url": f"/api/recordings/{fname}"}
 
 @api_router.get("/api/recordings/{filename}")
-async def serve_recording(filename: str):
+async def serve_recording(filename: str, current_user: dict = Depends(get_current_user)):
     import re
     if not re.match(r'^(call|exotel)_[\w]+\.(wav|webm|mp3|ogg)$', filename):
         return JSONResponse(status_code=404, content={"error": "Not found"})
@@ -1295,48 +1334,57 @@ def api_create_campaign(data: CampaignCreate, current_user: dict = Depends(get_c
 
 @api_router.get("/api/campaigns/{campaign_id}")
 def api_get_campaign(campaign_id: int, current_user: dict = Depends(get_current_user)):
-    campaign = get_campaign_by_id(campaign_id)
-    if not campaign:
-        raise HTTPException(status_code=404, detail="Campaign not found")
+    org_id = current_user.get("org_id")
+    campaign = _get_campaign_or_403(campaign_id, org_id)
     stats = get_campaign_stats(campaign_id)
-    voice = get_campaign_voice_settings(campaign_id, current_user.get("org_id"))
+    voice = get_campaign_voice_settings(campaign_id, org_id)
     return {**campaign, "stats": stats, "voice_settings": voice}
 
 @api_router.put("/api/campaigns/{campaign_id}")
 def api_update_campaign(campaign_id: int, data: CampaignUpdate, current_user: dict = Depends(get_current_user)):
-    update_campaign(campaign_id, name=data.name, status=data.status, lead_source=data.lead_source, product_id=data.product_id)
+    org_id = current_user.get("org_id")
+    _get_campaign_or_403(campaign_id, org_id)
+    update_campaign(campaign_id, name=data.name, status=data.status, lead_source=data.lead_source, product_id=data.product_id, org_id=org_id)
     return {"status": "success"}
 
 @api_router.delete("/api/campaigns/{campaign_id}")
 def api_delete_campaign(campaign_id: int, current_user: dict = Depends(get_current_user)):
-    ok = delete_campaign(campaign_id)
+    org_id = current_user.get("org_id")
+    _get_campaign_or_403(campaign_id, org_id)
+    ok = delete_campaign(campaign_id, org_id)
     return {"status": "ok" if ok else "not_found"}
 
 @api_router.get("/api/campaigns/{campaign_id}/leads")
 def api_get_campaign_leads(campaign_id: int, current_user: dict = Depends(get_current_user)):
+    _get_campaign_or_403(campaign_id, current_user.get("org_id"))
     return get_campaign_leads(campaign_id)
 
 @api_router.post("/api/campaigns/{campaign_id}/leads")
 def api_add_campaign_leads(campaign_id: int, data: CampaignLeadsAssign, current_user: dict = Depends(get_current_user)):
+    _get_campaign_or_403(campaign_id, current_user.get("org_id"))
     added = add_leads_to_campaign(campaign_id, data.lead_ids)
     return {"status": "success", "added": added}
 
 @api_router.delete("/api/campaigns/{campaign_id}/leads/{lead_id}")
 def api_remove_campaign_lead(campaign_id: int, lead_id: int, current_user: dict = Depends(get_current_user)):
+    _get_campaign_or_403(campaign_id, current_user.get("org_id"))
     ok = remove_lead_from_campaign(campaign_id, lead_id)
     return {"status": "ok" if ok else "not_found"}
 
 @api_router.get("/api/campaigns/{campaign_id}/stats")
 def api_get_campaign_stats(campaign_id: int, current_user: dict = Depends(get_current_user)):
+    _get_campaign_or_403(campaign_id, current_user.get("org_id"))
     return get_campaign_stats(campaign_id)
 
 @api_router.get("/api/campaigns/{campaign_id}/call-log")
 def api_get_campaign_call_log(campaign_id: int, current_user: dict = Depends(get_current_user)):
+    _get_campaign_or_403(campaign_id, current_user.get("org_id"))
     return get_campaign_call_log(campaign_id)
 
 @api_router.get("/api/campaigns/{campaign_id}/retries")
 def api_get_campaign_retries(campaign_id: int, current_user: dict = Depends(get_current_user)):
     """Get the auto-retry queue for a campaign."""
+    _get_campaign_or_403(campaign_id, current_user.get("org_id"))
     retries = get_retries_by_campaign(campaign_id)
     # Serialize datetime fields for JSON
     for r in retries:
@@ -1347,6 +1395,7 @@ def api_get_campaign_retries(campaign_id: int, current_user: dict = Depends(get_
 
 @api_router.get("/api/campaigns/{campaign_id}/call-reviews")
 def api_get_campaign_call_reviews(campaign_id: int, current_user: dict = Depends(get_current_user)):
+    _get_campaign_or_403(campaign_id, current_user.get("org_id"))
     return get_call_reviews_by_campaign(campaign_id)
 
 @api_router.get("/api/transcripts/{transcript_id}/review")
@@ -1359,6 +1408,7 @@ def api_get_transcript_review(transcript_id: int, current_user: dict = Depends(g
 @api_router.get("/api/campaigns/{campaign_id}/call-insights")
 def api_get_campaign_call_insights(campaign_id: int, current_user: dict = Depends(get_current_user)):
     """Aggregate call reviews into campaign-level insights."""
+    _get_campaign_or_403(campaign_id, current_user.get("org_id"))
     reviews = get_call_reviews_by_campaign(campaign_id)
     if not reviews:
         return {"avg_quality_score": 0, "appointment_rate": 0, "total_reviews": 0,
@@ -1724,12 +1774,15 @@ def mobile_create_lead(lead: LeadCreate, current_user: dict = Depends(get_curren
 
 @mobile_api.put("/leads/{lead_id}/status")
 def mobile_update_lead_status(lead_id: int, payload: LeadStatusUpdate, current_user: dict = Depends(get_current_user)):
-    update_lead_status(lead_id, payload.status)
+    org_id = current_user.get("org_id")
+    result = update_lead_status(lead_id, payload.status, org_id)
+    if result is False:
+        raise HTTPException(status_code=403, detail="Lead not found or access denied")
     return {"status": "success", "message": f"Lead {lead_id} updated to {payload.status}"}
 
 @mobile_api.get("/analytics")
 def mobile_get_analytics(current_user: dict = Depends(get_current_user)):
-    return get_analytics()
+    return get_analytics(current_user.get("org_id"))
 
 @mobile_api.post("/punch")
 def mobile_punch(punch: PunchCreate, current_user: dict = Depends(get_current_user)):
@@ -1741,5 +1794,5 @@ def mobile_get_tasks(current_user: dict = Depends(get_current_user)):
 
 @mobile_api.put("/tasks/{task_id}/complete")
 def mobile_complete_task(task_id: int, current_user: dict = Depends(get_current_user)):
-    complete_task(task_id)
+    complete_task(task_id, current_user.get("org_id"))
     return {"status": "success"}

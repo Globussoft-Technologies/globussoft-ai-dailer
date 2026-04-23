@@ -748,16 +748,26 @@ def get_site_by_id(site_id: int, org_id: int) -> Dict:
 
 # --- WORKFLOW & TASKS ---
 
-def update_lead_note(lead_id: int, note: str):
+def update_lead_note(lead_id: int, note: str, org_id: int = None):
     conn = get_conn()
     cursor = conn.cursor()
+    if org_id:
+        cursor.execute("SELECT id FROM leads WHERE id = %s AND org_id = %s", (lead_id, org_id))
+        if not cursor.fetchone():
+            conn.close()
+            return False
     cursor.execute("UPDATE leads SET follow_up_note = %s WHERE id = %s", (note, lead_id))
     conn.close()
     return True
 
-def update_lead_status(lead_id: int, status: str):
+def update_lead_status(lead_id: int, status: str, org_id: int = None):
     conn = get_conn()
     cursor = conn.cursor()
+    if org_id:
+        cursor.execute("SELECT id FROM leads WHERE id = %s AND org_id = %s", (lead_id, org_id))
+        if not cursor.fetchone():
+            conn.close()
+            return False
     cursor.execute("UPDATE leads SET status = %s WHERE id = %s", (status, lead_id))
     
     # Cross-Department Automation Rule
@@ -801,10 +811,16 @@ def get_all_tasks(org_id: int) -> List[Dict]:
     conn.close()
     return rows
 
-def complete_task(task_id: int):
+def complete_task(task_id: int, org_id: int = None):
     conn = get_conn()
     cursor = conn.cursor()
-    cursor.execute("UPDATE tasks SET status = 'Complete' WHERE id = %s", (task_id,))
+    if org_id:
+        cursor.execute(
+            "UPDATE tasks t JOIN leads l ON t.lead_id = l.id SET t.status = 'Complete' WHERE t.id = %s AND l.org_id = %s",
+            (task_id, org_id)
+        )
+    else:
+        cursor.execute("UPDATE tasks SET status = 'Complete' WHERE id = %s", (task_id,))
     conn.close()
     return True
 
@@ -865,17 +881,26 @@ def get_documents_by_lead(lead_id: int) -> List[Dict]:
 
 # --- ANALYTICS DASHBOARD ---
 
-def get_analytics() -> List[Dict]:
+def get_analytics(org_id: int = None) -> List[Dict]:
     """Generates a 7-day trailing visual history seeded loosely on actual aggregate CRM numbers."""
     stats = []
     base_date = datetime.now()
     random.seed(base_date.strftime('%Y-%W'))  # Consistent per week for UI stability
-    
+
     conn = get_conn()
     cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*) as cnt FROM calls")
+    if org_id:
+        cursor.execute(
+            "SELECT COUNT(*) as cnt FROM calls c JOIN leads l ON c.lead_id = l.id WHERE l.org_id = %s",
+            (org_id,)
+        )
+    else:
+        cursor.execute("SELECT COUNT(*) as cnt FROM calls")
     real_calls = cursor.fetchone()['cnt'] or 15
-    cursor.execute("SELECT COUNT(*) as cnt FROM leads WHERE status = 'Closed'")
+    if org_id:
+        cursor.execute("SELECT COUNT(*) as cnt FROM leads WHERE status = 'Closed' AND org_id = %s", (org_id,))
+    else:
+        cursor.execute("SELECT COUNT(*) as cnt FROM leads WHERE status = 'Closed'")
     real_closed = cursor.fetchone()['cnt'] or 1
     conn.close()
 
@@ -1083,39 +1108,46 @@ def get_campaigns_by_org(org_id: int) -> List[Dict]:
     return rows
 
 
-def get_campaign_by_id(campaign_id: int) -> Dict:
+def get_campaign_by_id(campaign_id: int, org_id: int = None) -> Dict:
     conn = get_conn()
     cursor = conn.cursor()
-    cursor.execute('''
+    org_filter = " AND c.org_id = %s" if org_id else ""
+    params = (campaign_id, org_id) if org_id else (campaign_id,)
+    cursor.execute(f'''
         SELECT c.*, p.name as product_name
         FROM campaigns c
-        JOIN products p ON c.product_id = p.id
-        WHERE c.id = %s
-    ''', (campaign_id,))
+        LEFT JOIN products p ON c.product_id = p.id
+        WHERE c.id = %s{org_filter}
+    ''', params)
     row = cursor.fetchone()
     conn.close()
     return row
 
 
-def update_campaign(campaign_id: int, name: str = None, status: str = None, lead_source: str = None, product_id: int = None):
+def update_campaign(campaign_id: int, name: str = None, status: str = None, lead_source: str = None, product_id: int = None, org_id: int = None):
     conn = get_conn()
     cursor = conn.cursor()
+    org_filter = " AND org_id = %s" if org_id else ""
+    org_vals = (org_id,) if org_id else ()
     if name:
-        cursor.execute("UPDATE campaigns SET name = %s WHERE id = %s", (name, campaign_id))
+        cursor.execute(f"UPDATE campaigns SET name = %s WHERE id = %s{org_filter}", (name, campaign_id) + org_vals)
     if status:
-        cursor.execute("UPDATE campaigns SET status = %s WHERE id = %s", (status, campaign_id))
+        cursor.execute(f"UPDATE campaigns SET status = %s WHERE id = %s{org_filter}", (status, campaign_id) + org_vals)
     if lead_source is not None:
-        cursor.execute("UPDATE campaigns SET lead_source = %s WHERE id = %s", (lead_source or None, campaign_id))
+        cursor.execute(f"UPDATE campaigns SET lead_source = %s WHERE id = %s{org_filter}", (lead_source or None, campaign_id) + org_vals)
     if product_id is not None:
-        cursor.execute("UPDATE campaigns SET product_id = %s WHERE id = %s", (product_id, campaign_id))
+        cursor.execute(f"UPDATE campaigns SET product_id = %s WHERE id = %s{org_filter}", (product_id, campaign_id) + org_vals)
     conn.close()
     return True
 
 
-def delete_campaign(campaign_id: int):
+def delete_campaign(campaign_id: int, org_id: int = None):
     conn = get_conn()
     cursor = conn.cursor()
-    cursor.execute("DELETE FROM campaigns WHERE id = %s", (campaign_id,))
+    if org_id:
+        cursor.execute("DELETE FROM campaigns WHERE id = %s AND org_id = %s", (campaign_id, org_id))
+    else:
+        cursor.execute("DELETE FROM campaigns WHERE id = %s", (campaign_id,))
     affected = cursor.rowcount
     conn.close()
     return affected > 0
@@ -1413,7 +1445,7 @@ def get_products_by_org(org_id: int):
     conn.close()
     return rows
 
-def update_product(product_id: int, **kwargs):
+def update_product(product_id: int, org_id: int = None, **kwargs):
     conn = get_conn()
     cursor = conn.cursor()
     parts, vals = [], []
@@ -1421,15 +1453,22 @@ def update_product(product_id: int, **kwargs):
         if k in kwargs and kwargs[k] is not None:
             parts.append(f"{k} = %s"); vals.append(kwargs[k])
     if parts:
-        vals.append(product_id)
-        cursor.execute(f"UPDATE products SET {', '.join(parts)} WHERE id = %s", vals)
+        if org_id:
+            vals.extend([product_id, org_id])
+            cursor.execute(f"UPDATE products SET {', '.join(parts)} WHERE id = %s AND org_id = %s", vals)
+        else:
+            vals.append(product_id)
+            cursor.execute(f"UPDATE products SET {', '.join(parts)} WHERE id = %s", vals)
     conn.close()
     return True
 
-def delete_product(product_id: int):
+def delete_product(product_id: int, org_id: int = None):
     conn = get_conn()
     cursor = conn.cursor()
-    cursor.execute("DELETE FROM products WHERE id = %s", (product_id,))
+    if org_id:
+        cursor.execute("DELETE FROM products WHERE id = %s AND org_id = %s", (product_id, org_id))
+    else:
+        cursor.execute("DELETE FROM products WHERE id = %s", (product_id,))
     conn.close()
     return True
 
