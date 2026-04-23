@@ -1,28 +1,29 @@
 # ── Dev override — auto-reload on file changes ────────────────────────────────
 # Loaded automatically alongside docker-compose.yml. Do NOT use in production.
 #
-# Backend:  uvicorn --reload on port 8001  → auto-restarts on any .py save
-# Frontend: Vite dev server on port 5173   → HMR on any frontend/src/ save
+# RAG service: uvicorn --reload on port 8002 → auto-restarts on any .py save
+# Frontend:    Vite dev server on port 5173  → HMR on any frontend/src/ save
 #
-# Open http://localhost:5173 in your browser (NOT 8001) during development.
+# Open http://localhost:5173 in your browser during development.
+# Go audio service (go-audio) runs as normal — rebuild it separately with:
+#   docker compose up -d --no-deps --build go-audio
 
 services:
 
-  # ── Backend: Python hot-reload ───────────────────────────────────────────────
-  app:
+  # ── RAG service: hot-reload ───────────────────────────────────────────────────
+  rag-service:
     volumes:
-      - .:/app                          # repo mounted → uvicorn --reload sees .py changes
-      - /app/frontend/node_modules      # keep container node_modules intact
-      - /app/frontend/dist              # keep last built dist (fallback if frontend is down)
-      - recordings:/app/recordings
+      - ./rag.py:/app/rag.py                    # live mount for rag.py edits
+      - ./rag_service.py:/app/rag_service.py    # live mount for service edits
       - faiss_indexes:/app/faiss_indexes
-    command: >
-      uvicorn main:app
-      --host 0.0.0.0
-      --port 8001
-      --reload
-      --reload-dir /app
-      --log-level info
+    command:
+      - uvicorn
+      - rag_service:app
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8002"
+      - --reload
     restart: "no"
 
   # ── Frontend: Vite HMR dev server ────────────────────────────────────────────
@@ -36,5 +37,5 @@ services:
       - "5173:5173"
     command: sh -c "npm install --legacy-peer-deps && npm run dev"
     depends_on:
-      - app
+      - go-audio
     restart: "no"

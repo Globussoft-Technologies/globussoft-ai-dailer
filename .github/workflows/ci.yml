@@ -7,7 +7,40 @@ on:
     branches: [main]
 
 jobs:
-  backend-check:
+  # ── Go audio service tests ──────────────────────────────────────────────────
+  go-tests:
+    name: Go Audio Service Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache-dependency-path: backend/go.sum
+
+      - name: Run Go tests
+        working-directory: backend
+        run: make test-ci
+
+      - name: Build Go binary
+        working-directory: backend
+        run: make build
+
+  # ── Go Docker image build check ────────────────────────────────────────────
+  go-docker:
+    name: Go Docker Build
+    runs-on: ubuntu-latest
+    needs: go-tests
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        working-directory: backend
+        run: docker build -t callified-go-audio:ci .
+
+  api-tests:
+    name: API E2E Tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

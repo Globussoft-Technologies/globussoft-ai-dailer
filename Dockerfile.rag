@@ -1,0 +1,33 @@
+# Callified RAG Microservice — Phase 5
+# Minimal Python container: FAISS + sentence-transformers only.
+# The model is pre-baked at build time so cold-start is < 2s.
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Build deps required by faiss-cpu and numpy
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        libopenblas-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python deps
+COPY requirements.rag.txt .
+RUN pip install --no-cache-dir -r requirements.rag.txt
+
+# Pre-bake the embedding model so the first request is instant
+RUN python -c "\
+from sentence_transformers import SentenceTransformer; \
+SentenceTransformer('all-MiniLM-L6-v2'); \
+print('model cached')"
+
+# Copy source
+COPY rag.py rag_service.py ./
+
+# FAISS indexes are persisted on this volume (mounted by docker-compose)
+VOLUME ["/app/faiss_indexes"]
+
+EXPOSE 8002
+
+CMD ["uvicorn", "rag_service:app", "--host", "0.0.0.0", "--port", "8002"]

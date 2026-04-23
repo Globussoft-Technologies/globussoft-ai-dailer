@@ -25,8 +25,13 @@ export default function AnalyticsPage({ apiFetch, API_URL }) {
   if (loading) return <div style={{padding: '3rem', textAlign: 'center', color: '#94a3b8'}}>Loading analytics...</div>;
   if (!data) return <div style={{padding: '3rem', textAlign: 'center', color: '#94a3b8'}}>Failed to load analytics data.</div>;
 
-  const maxDaily = Math.max(...data.daily_calls.map(d => d.count), 1);
-  const sentimentTotal = (data.sentiment_breakdown.positive + data.sentiment_breakdown.neutral + data.sentiment_breakdown.negative) || 1;
+  const dailyCalls = data.daily_calls || [];
+  const sentimentBreakdown = data.sentiment_breakdown || { positive: 0, neutral: 0, negative: 0 };
+  const campaignPerformance = data.campaign_performance || [];
+  const topFailureReasons = data.top_failure_reasons || [];
+
+  const maxDaily = Math.max(...dailyCalls.map(d => d.count), 1);
+  const sentimentTotal = (sentimentBreakdown.positive + sentimentBreakdown.neutral + sentimentBreakdown.negative) || 1;
 
   return (
     <div className="analytics-container">
@@ -76,12 +81,12 @@ export default function AnalyticsPage({ apiFetch, API_URL }) {
 
       {/* Top Stats Row */}
       <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem', padding: '0 24px', marginBottom: '2rem'}}>
-        <StatCard label="Total Calls" value={data.total_calls} />
-        <StatCard label="Calls Today" value={data.calls_today} />
-        <StatCard label="Pickup Rate" value={`${Math.round(data.pickup_rate * 100)}%`} color={data.pickup_rate >= 0.5 ? '#22c55e' : '#ef4444'} />
-        <StatCard label="Appointment Rate" value={`${Math.round(data.appointment_rate * 100)}%`} color={data.appointment_rate >= 0.2 ? '#22c55e' : '#f59e0b'} />
-        <StatCard label="Avg Duration" value={`${Math.round(data.avg_call_duration_sec)}s`} />
-        <StatCard label="This Week" value={data.calls_this_week} />
+        <StatCard label="Total Calls" value={data.total_calls || 0} />
+        <StatCard label="Calls Today" value={data.calls_today || 0} />
+        <StatCard label="Pickup Rate" value={`${Math.round((data.pickup_rate || 0) * 100)}%`} color={(data.pickup_rate || 0) >= 0.5 ? '#22c55e' : '#ef4444'} />
+        <StatCard label="Appointment Rate" value={`${Math.round((data.appointment_rate || 0) * 100)}%`} color={(data.appointment_rate || 0) >= 0.2 ? '#22c55e' : '#f59e0b'} />
+        <StatCard label="Avg Duration" value={`${Math.round(data.avg_call_duration_sec || 0)}s`} />
+        <StatCard label="This Week" value={data.calls_this_week || 0} />
       </div>
 
       <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem', padding: '0 24px', marginBottom: '2rem'}}>
@@ -89,7 +94,7 @@ export default function AnalyticsPage({ apiFetch, API_URL }) {
         <div className="glass-panel" style={{padding: '1.5rem'}}>
           <h4 style={{marginTop: 0, color: '#94a3b8', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '1.5rem'}}>Daily Calls (Last 7 Days)</h4>
           <div style={{display: 'flex', alignItems: 'flex-end', gap: '8px', height: '160px'}}>
-            {data.daily_calls.map((d, i) => {
+            {dailyCalls.map((d, i) => {
               const pct = Math.max(4, (d.count / maxDaily) * 100);
               const dayLabel = new Date(d.date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short' });
               return (
@@ -114,11 +119,11 @@ export default function AnalyticsPage({ apiFetch, API_URL }) {
         <div className="glass-panel" style={{padding: '1.5rem'}}>
           <h4 style={{marginTop: 0, color: '#94a3b8', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '1.5rem'}}>Customer Sentiment</h4>
           <div style={{display: 'flex', flexDirection: 'column', gap: '1rem'}}>
-            <SentimentBar label="Positive" count={data.sentiment_breakdown.positive} total={sentimentTotal} color="#22c55e" />
-            <SentimentBar label="Neutral" count={data.sentiment_breakdown.neutral} total={sentimentTotal} color="#f59e0b" />
-            <SentimentBar label="Negative" count={data.sentiment_breakdown.negative} total={sentimentTotal} color="#ef4444" />
+            <SentimentBar label="Positive" count={sentimentBreakdown.positive} total={sentimentTotal} color="#22c55e" />
+            <SentimentBar label="Neutral" count={sentimentBreakdown.neutral} total={sentimentTotal} color="#f59e0b" />
+            <SentimentBar label="Negative" count={sentimentBreakdown.negative} total={sentimentTotal} color="#ef4444" />
           </div>
-          {sentimentTotal <= 1 && data.sentiment_breakdown.positive === 0 && (
+          {sentimentTotal <= 1 && sentimentBreakdown.positive === 0 && (
             <p style={{color: '#64748b', fontSize: '0.85rem', marginTop: '1rem'}}>No sentiment data yet. Reviews are generated after calls complete.</p>
           )}
         </div>
@@ -128,7 +133,7 @@ export default function AnalyticsPage({ apiFetch, API_URL }) {
       <div style={{padding: '0 24px', marginBottom: '2rem'}}>
         <div className="glass-panel" style={{padding: '1.5rem'}}>
           <h4 style={{marginTop: 0, color: '#94a3b8', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '1rem'}}>Campaign Performance</h4>
-          {data.campaign_performance.length === 0 ? (
+          {campaignPerformance.length === 0 ? (
             <p style={{color: '#64748b', fontSize: '0.9rem'}}>No campaigns found.</p>
           ) : (
             <div style={{overflowX: 'auto'}}>
@@ -142,7 +147,7 @@ export default function AnalyticsPage({ apiFetch, API_URL }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {data.campaign_performance.map((c) => (
+                  {campaignPerformance.map((c) => (
                     <tr key={c.campaign_id} style={{borderBottom: '1px solid rgba(255,255,255,0.05)'}}>
                       <td style={tdStyle}>{c.name}</td>
                       <td style={{...tdStyle, textAlign: 'center'}}>{c.calls}</td>
@@ -162,12 +167,12 @@ export default function AnalyticsPage({ apiFetch, API_URL }) {
       </div>
 
       {/* Top Failure Reasons */}
-      {data.top_failure_reasons.length > 0 && (
+      {topFailureReasons.length > 0 && (
         <div style={{padding: '0 24px', marginBottom: '2rem'}}>
           <div className="glass-panel" style={{padding: '1.5rem'}}>
             <h4 style={{marginTop: 0, color: '#94a3b8', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '1rem'}}>Top Failure Reasons</h4>
             <div style={{display: 'flex', flexDirection: 'column', gap: '0.5rem'}}>
-              {data.top_failure_reasons.map((r, i) => (
+              {topFailureReasons.map((r, i) => (
                 <div key={i} style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.5rem 0', borderBottom: '1px solid rgba(255,255,255,0.05)'}}>
                   <span style={{color: '#e2e8f0', fontSize: '0.85rem'}}>{r.reason}</span>
                   <span style={{color: '#ef4444', fontWeight: 600, fontSize: '0.85rem'}}>{r.count}</span>

@@ -21,7 +21,7 @@ export default function CampaignsTab({
   const [showAddLeadsModal, setShowAddLeadsModal] = useState(false);
   const [editLead, setEditLead] = useState(null);
   const [editForm, setEditForm] = useState({ first_name: '', last_name: '', phone: '', source: '' });
-  const [createForm, setCreateForm] = useState({ name: '', product_id: '', lead_source: '' });
+  const [createForm, setCreateForm] = useState({ name: '', product_id: '', lead_source: '', channel: 'voice' });
   const [selectedLeadIds, setSelectedLeadIds] = useState([]);
   const [loading, setLoading] = useState(false);
   const [showCsvImportModal, setShowCsvImportModal] = useState(false);
@@ -125,6 +125,7 @@ export default function CampaignsTab({
           name: createForm.name.trim(),
           product_id: createForm.product_id ? parseInt(createForm.product_id) : null,
           lead_source: createForm.lead_source || null,
+          channel: createForm.channel || 'voice',
         })
       });
 
@@ -162,7 +163,7 @@ export default function CampaignsTab({
         }
       }
 
-      setCreateForm({ name: '', product_id: '', lead_source: '' });
+      setCreateForm({ name: '', product_id: '', lead_source: '', channel: 'voice' });
       setSelectedTemplate(null);
       setCreateError('');
       setShowCreateModal(false);
@@ -203,7 +204,8 @@ export default function CampaignsTab({
       id: campaign.id,
       name: campaign.name || '',
       product_id: campaign.product_id || '',
-      lead_source: campaign.lead_source || ''
+      lead_source: campaign.lead_source || '',
+      channel: campaign.channel || 'voice'
     });
     setShowEditCampaignModal(true);
   };
@@ -219,7 +221,8 @@ export default function CampaignsTab({
         body: JSON.stringify({
           name: editCampaignForm.name.trim(),
           product_id: editCampaignForm.product_id ? parseInt(editCampaignForm.product_id) : null,
-          lead_source: editCampaignForm.lead_source || null
+          lead_source: editCampaignForm.lead_source || null,
+          channel: editCampaignForm.channel || 'voice'
         })
       });
       setShowEditCampaignModal(false);
@@ -440,8 +443,17 @@ export default function CampaignsTab({
               <div key={campaign.id} className="glass-panel" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '10px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                   <div>
-                    <div style={{ fontWeight: 700, fontSize: '1.05rem', color: '#e2e8f0', marginBottom: '6px' }}>{campaign.name}</div>
-                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                    <div style={{fontWeight: 700, fontSize: '1.05rem', color: '#e2e8f0', marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '8px'}}>
+                      {campaign.name}
+                      <span style={{
+                        background: campaign.channel === 'whatsapp' ? 'rgba(37,211,102,0.15)' : 'rgba(99,102,241,0.15)',
+                        color: campaign.channel === 'whatsapp' ? '#25D366' : '#818cf8',
+                        fontSize: '0.65rem', padding: '2px 7px', borderRadius: '12px', fontWeight: 600, flexShrink: 0
+                      }}>
+                        {campaign.channel === 'whatsapp' ? '💬 WhatsApp' : '📞 Voice'}
+                      </span>
+                    </div>
+                    <div style={{display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap'}}>
                       {campaign.product_id && (
                         <span style={{ background: 'rgba(6,182,212,0.2)', color: '#22d3ee', fontSize: '0.7rem', padding: '2px 8px', borderRadius: '10px', fontWeight: 600 }}>
                           {getProductName(campaign.product_id)}

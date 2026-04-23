@@ -1,67 +1,114 @@
+# ─── Callified AI — Full Stack (Go Backend + RAG Service + MySQL + Redis) ──────
+#
+# Services:
+#   mysql        MySQL 8 database (port 3307 locally)
+#   redis        Redis 7 (port 6380 locally)
+#   rag-service  Python FAISS/sentence-transformers RAG microservice (port 8002)
+#   go-audio     Go WebSocket audio pipeline + REST API (port 8001)
+#
+# Prerequisites:
+#   cp backend/.env.example backend/.env   — then fill in your API keys
+#
+# Start the full stack:
+#   docker compose up --build
+#
+# Rebuild only the Go service (zero downtime hot-swap):
+#   docker compose up -d --no-deps --build go-audio
+
 services:
 
-  # ─── MySQL 8.0 ──────────────────────────────────────────────────────────────
-  db:
+  # ── MySQL 8 ─────────────────────────────────────────────────────────────────
+  mysql:
     image: mysql:8.0
-    container_name: callified-db
+    container_name: callified-mysql
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
-      MYSQL_DATABASE: ${MYSQL_DATABASE}
-      MYSQL_USER: ${MYSQL_USER}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpassword}
+      MYSQL_DATABASE:      ${MYSQL_DATABASE:-callified_ai}
+      MYSQL_USER:          ${MYSQL_USER:-callified}
+      MYSQL_PASSWORD:      ${MYSQL_PASSWORD:-Callified@2026}
     ports:
-      - "3307:3306"          # exposed on 3307 locally to avoid conflicts
+      - "127.0.0.1:3307:3306"   # exposed on 3307 to avoid conflicts with local MySQL
     volumes:
       - mysql_data:/var/lib/mysql
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "${MYSQL_USER}", "-p${MYSQL_PASSWORD}"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-rootpassword}"]
       interval: 10s
       timeout: 5s
       retries: 10
       start_period: 30s
 
-  # ─── Redis 7 ────────────────────────────────────────────────────────────────
+  # ── Redis 7 ─────────────────────────────────────────────────────────────────
   redis:
     image: redis:7-alpine
     container_name: callified-redis
     restart: unless-stopped
-    command: redis-server --requirepass ${REDIS_PASSWORD}
+    command: redis-server --requirepass ${REDIS_PASSWORD:-callified_redis_pass} --save 60 1 --loglevel warning
     ports:
-      - "6380:6379"          # exposed on 6380 locally to avoid conflicts
+      - "127.0.0.1:6380:6379"   # exposed on 6380 to avoid conflicts with local Redis
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-callified_redis_pass}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
 
-  # ─── Callified AI App ────────────────────────────────────────────────────────
-  app:
+  # ── Python RAG microservice (FAISS + sentence-transformers only) ─────────────
+  rag-service:
     build:
       context: .
-      dockerfile: Dockerfile
-    container_name: callified-app
+      dockerfile: Dockerfile.rag
+    container_name: callified-rag
     restart: unless-stopped
-    ports:
-      - "8001:8001"
-    env_file:
-      - .env.docker
+    env_file: backend/.env
+    environment:
+      MYSQL_HOST: mysql
     volumes:
-      - recordings:/app/recordings
       - faiss_indexes:/app/faiss_indexes
+    ports:
+      - "127.0.0.1:8002:8002"   # internal only; not exposed to Nginx directly
     depends_on:
-      db:
+      mysql:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s   # allow time for uvicorn startup (model is pre-baked)
+
+  # ── Go audio + REST API backend ──────────────────────────────────────────────
+  go-audio:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: callified-go-audio
+    restart: unless-stopped
+    env_file: backend/.env
+    environment:
+      GO_AUDIO_PORT:    "8001"
+      MYSQL_HOST:       mysql
+      RECORDINGS_DIR:   "/recordings"
+      RAG_SERVICE_URL:  "http://rag-service:8002"
+    volumes:
+      - recordings:/recordings
+    ports:
+      - "127.0.0.1:8001:8001"   # WebSocket audio + REST API
+    depends_on:
+      rag-service:
+        condition: service_healthy
+      mysql:
         condition: service_healthy
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8001/ping"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 60s    # give time for model load on first run
+      test: ["CMD", "wget", "-qO-", "http://localhost:8001/health"]
+      interval: 10s
+      timeout: 3s
+      start_period: 10s
+      retries: 3
+    stop_grace_period: 60s   # allow active calls to drain on SIGTERM
 
 volumes:
   mysql_data:

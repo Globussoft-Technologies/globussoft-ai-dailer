@@ -141,6 +141,15 @@ export default function CampaignModals({
                     <option value="cold">Cold Outreach</option>
                   </select>
                 </div>
+                <div style={{marginBottom: '1.5rem'}}>
+                  <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>Communication Channel</label>
+                  <select className="form-input" value={createForm.channel || 'voice'}
+                    onChange={e => setCreateForm({...createForm, channel: e.target.value})}
+                    style={{width: '100%'}}>
+                    <option value="voice">📞 Voice Call (AI Phone)</option>
+                    <option value="whatsapp">💬 WhatsApp (AI Chat)</option>
+                  </select>
+                </div>
                 {createError && (
                   <div style={{marginBottom: '1rem', padding: '10px 14px', borderRadius: '8px',
                     background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)',
@@ -255,6 +264,15 @@ export default function CampaignModals({
                   <option value="website">Website Form</option>
                   <option value="referral">Referral</option>
                   <option value="cold">Cold Outreach</option>
+                </select>
+              </div>
+              <div style={{marginBottom: '1.5rem'}}>
+                <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>Communication Channel</label>
+                <select className="form-input" value={editCampaignForm.channel || 'voice'}
+                  onChange={e => setEditCampaignForm({...editCampaignForm, channel: e.target.value})}
+                  style={{width: '100%'}}>
+                  <option value="voice">📞 Voice Call (AI Phone)</option>
+                  <option value="whatsapp">💬 WhatsApp (AI Chat)</option>
                 </select>
               </div>
               <div style={{display: 'flex', gap: '10px', justifyContent: 'flex-end'}}>

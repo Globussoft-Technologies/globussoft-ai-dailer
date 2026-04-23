@@ -1,0 +1,11 @@
+# RAG microservice dependencies (Phase 5).
+# Intentionally minimal — only what rag.py needs.
+fastapi>=0.111.0
+uvicorn[standard]>=0.30.0
+faiss-cpu>=1.8.0
+sentence-transformers>=3.0.0
+numpy>=1.26.0
+pymupdf>=1.24.0
+pymysql>=1.1.0
+python-dotenv>=1.0.0
+python-multipart>=0.0.9

@@ -20,11 +20,18 @@ export default function BillingPage({ apiFetch, API_URL }) {
         apiFetch(`${API_URL}/billing/payments`),
         apiFetch(`${API_URL}/billing/invoices`),
       ]);
-      setPlans(await plansRes.json());
-      setSubscription(await subRes.json());
-      setUsage(await usageRes.json());
-      setPayments(await payRes.json());
-      try { setInvoices(await invRes.json()); } catch(e) { setInvoices([]); }
+      const plansData = await plansRes.json();
+      if (Array.isArray(plansData)) setPlans(plansData);
+      const subData = await subRes.json();
+      if (subData && !subData.error) setSubscription(subData);
+      const usageData = await usageRes.json();
+      if (usageData && !usageData.error) setUsage(usageData);
+      const payData = await payRes.json();
+      if (Array.isArray(payData)) setPayments(payData);
+      try {
+        const invData = await invRes.json();
+        if (Array.isArray(invData)) setInvoices(invData);
+      } catch(e) { setInvoices([]); }
     } catch(e) { console.error('Billing fetch error:', e); }
     setLoading(false);
   };

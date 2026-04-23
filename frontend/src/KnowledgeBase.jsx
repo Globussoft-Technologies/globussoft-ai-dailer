@@ -13,7 +13,7 @@ export default function KnowledgeBase({ apiUrl }) {
         headers: { 'Authorization': `Bearer ${authToken}` }
       });
       const data = await res.json();
-      setFiles(data);
+      if (Array.isArray(data)) setFiles(data);
     } catch(e) {
       console.error(e);
     }

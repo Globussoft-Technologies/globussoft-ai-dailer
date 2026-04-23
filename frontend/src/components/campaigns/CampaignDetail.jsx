@@ -1,6 +1,94 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { formatDateTime } from '../../utils/dateFormat';
 import { VOICE_RECOMMENDATIONS } from '../../constants/voices';
+
+// ── WhatsApp Blast Panel ──────────────────────────────────────────────────────
+function WhatsAppBlastPanel({ campaignId, apiFetch, API_URL }) {
+  const [blasting, setBlasting] = useState(false);
+  const [job, setJob] = useState(null);
+  const [error, setError] = useState('');
+  const pollRef = useRef(null);
+
+  const stopPoll = () => { if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } };
+
+  const pollStatus = (jobId) => {
+    stopPoll();
+    pollRef.current = setInterval(async () => {
+      try {
+        const res = await apiFetch(`${API_URL}/wa/campaign-blast/status/${jobId}`);
+        const data = await res.json();
+        setJob(data);
+        if (data.status !== 'running') stopPoll();
+      } catch(e) { stopPoll(); }
+    }, 2000);
+  };
+
+  useEffect(() => () => stopPoll(), []);
+
+  const handleBlast = async () => {
+    setError('');
+    setBlasting(true);
+    setJob(null);
+    try {
+      const res = await apiFetch(`${API_URL}/wa/campaign-blast/${campaignId}`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) { setError(data.error || 'Blast failed'); setBlasting(false); return; }
+      if (data.sent !== undefined && data.total === 0) {
+        setJob({ status: 'done', total: 0, sent: 0, failed: 0, errors: [] });
+        setBlasting(false);
+        return;
+      }
+      setJob({ status: 'running', total: data.total, sent: 0, failed: 0, errors: [] });
+      pollStatus(data.job_id);
+    } catch(e) { setError('Network error'); }
+    setBlasting(false);
+  };
+
+  const isRunning = job?.status === 'running';
+  const isDone = job?.status === 'done';
+  const progress = job ? Math.round(((job.sent + job.failed) / Math.max(job.total, 1)) * 100) : 0;
+
+  return (
+    <div style={{marginBottom: '1rem'}}>
+      {error && (
+        <div style={{background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', color: '#fca5a5', borderRadius: '8px', padding: '10px 14px', marginBottom: '10px', fontSize: '0.85rem'}}>
+          ⚠️ {error}
+        </div>
+      )}
+      {!isRunning && !isDone && (
+        <button className="btn-primary"
+          style={{background: 'linear-gradient(135deg, #25D366, #128C7E)', fontSize: '0.85rem', padding: '8px 18px'}}
+          disabled={blasting}
+          onClick={handleBlast}>
+          {blasting ? 'Starting...' : '💬 Send to New Leads'}
+        </button>
+      )}
+      {(isRunning || isDone) && (
+        <div className="glass-panel" style={{padding: '12px 16px'}}>
+          <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '8px', fontSize: '0.85rem', color: '#e2e8f0'}}>
+            <span>{isRunning ? '⏳ Sending...' : '✅ Blast complete'}</span>
+            <span style={{color: '#94a3b8'}}>{job.sent} sent · {job.failed} failed · {job.total} total</span>
+          </div>
+          <div style={{background: 'rgba(255,255,255,0.05)', borderRadius: '4px', height: '6px', overflow: 'hidden'}}>
+            <div style={{width: `${progress}%`, height: '100%', background: 'linear-gradient(90deg, #25D366, #128C7E)', transition: 'width 0.4s'}} />
+          </div>
+          {isDone && job.failed > 0 && (
+            <div style={{marginTop: '8px', fontSize: '0.75rem', color: '#f97316'}}>
+              {job.errors?.slice(0, 3).map((e, i) => <div key={i}>{e}</div>)}
+              {job.errors?.length > 3 && <div>…and {job.errors.length - 3} more</div>}
+            </div>
+          )}
+          {isDone && (
+            <button onClick={() => { setJob(null); setError(''); }}
+              style={{marginTop: '8px', background: 'none', border: '1px solid rgba(255,255,255,0.1)', color: '#94a3b8', borderRadius: '6px', padding: '4px 10px', cursor: 'pointer', fontSize: '0.75rem'}}>
+              Send Again
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function CampaignDetail({
   selectedCampaign, setSelectedCampaign,
@@ -132,8 +220,8 @@ export default function CampaignDetail({
         <div className="glass-panel metric-card"><div className="metric-label">Appointments</div><div className="metric-value">{stats.booked}</div></div>
       </div>
 
-      {/* Voice Settings */}
-      <div className="glass-panel" style={{marginBottom: '1.5rem', padding: '12px 16px'}}>
+      {/* Voice Settings — hidden for WhatsApp campaigns */}
+      {selectedCampaign.channel !== 'whatsapp' && <div className="glass-panel" style={{marginBottom: '1.5rem', padding: '12px 16px'}}>
         <div style={{display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap'}}>
           <span style={{fontSize: '0.8rem', color: '#64748b', fontWeight: 600, whiteSpace: 'nowrap'}}>🔊 Campaign Voice Settings</span>
           <select className="form-input" value={campVoice.tts_provider}
@@ -187,7 +275,7 @@ export default function CampaignDetail({
             ℹ {VOICE_RECOMMENDATIONS[campVoice.tts_language][campVoice.tts_provider].note}
           </div>
         )}
-      </div>
+      </div>}
 
       {/* Billing Minutes Widget */}
       {billingUsage && (
@@ -267,6 +355,12 @@ export default function CampaignDetail({
             } catch(e) { alert('Failed'); }
           }}>Add & Assign</button>
       </div>
+
+      {selectedCampaign.channel === 'whatsapp' && (
+        <div style={{marginBottom: '1rem'}}>
+          <WhatsAppBlastPanel campaignId={selectedCampaign.id} apiFetch={apiFetch} API_URL={API_URL} />
+        </div>
+      )}
 
       <div style={{display: 'flex', gap: '10px', marginBottom: '1rem', flexWrap: 'wrap'}}>
         <button className="btn-primary" onClick={() => { setSelectedLeadIds([]); setShowAddLeadsModal(true); }}>+ Add from CRM</button>
@@ -349,7 +443,12 @@ export default function CampaignDetail({
       </div>
 
       {/* Call Log Table */}
-      {detailTab === 'calllog' && (
+      {detailTab === 'calllog' && selectedCampaign.channel === 'whatsapp' && (
+        <div className="glass-panel" style={{padding: '1.5rem', marginBottom: '1.5rem', textAlign: 'center', color: '#64748b'}}>
+          💬 Conversation history is in the <strong style={{color: '#25D366'}}>WhatsApp Comms</strong> tab.
+        </div>
+      )}
+      {detailTab === 'calllog' && selectedCampaign.channel !== 'whatsapp' && (
         <div className="glass-panel" style={{overflowX: 'auto', marginBottom: '1.5rem'}}>
           <table className="leads-table" style={{width: '100%'}}>
             <thead>

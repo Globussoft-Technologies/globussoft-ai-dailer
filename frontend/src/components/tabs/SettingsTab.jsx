@@ -306,11 +306,15 @@ export default function SettingsTab({
                         {p.scraped_info && (
                           <div style={{marginBottom: '1.25rem'}}>
                             <label style={{display: 'block', marginBottom: '6px', fontWeight: 600, color: '#22d3ee', fontSize: '0.85rem'}}>📄 AI-Extracted Info</label>
-                            <div style={{background: 'rgba(0,0,0,0.3)', padding: '12px', borderRadius: '8px',
-                              border: '1px solid rgba(34, 211, 238, 0.15)', whiteSpace: 'pre-wrap',
-                              color: '#cbd5e1', fontSize: '0.85rem', lineHeight: 1.5, maxHeight: '200px', overflowY: 'auto'}}>
-                              {p.scraped_info}
-                            </div>
+                            <textarea readOnly value={p.scraped_info}
+                              style={{
+                                width: '100%', boxSizing: 'border-box',
+                                background: 'rgba(0,0,0,0.3)', padding: '12px', borderRadius: '8px',
+                                border: '1px solid rgba(34,211,238,0.15)', whiteSpace: 'pre-wrap',
+                                color: '#cbd5e1', fontSize: '0.85rem', lineHeight: 1.6,
+                                height: '220px', resize: 'vertical', overflowY: 'scroll',
+                                fontFamily: 'inherit', cursor: 'text',
+                              }} />
                           </div>
                         )}
 

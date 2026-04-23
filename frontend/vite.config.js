@@ -8,12 +8,11 @@ export default defineConfig({
     port: 5173,
     proxy: {
       // Proxy all API, WebSocket and health calls to the FastAPI backend
-      '/api':          { target: 'http://app:8001', changeOrigin: true },
-      '/ws':           { target: 'ws://app:8001',   changeOrigin: true, ws: true },
-      '/media-stream': { target: 'ws://app:8001',   changeOrigin: true, ws: true },
-      '/ping':         { target: 'http://app:8001', changeOrigin: true },
-      '/token':        { target: 'http://app:8001', changeOrigin: true },
-      '/recordings':   { target: 'http://app:8001', changeOrigin: true },
+      '/api':          { target: 'http://go-audio:8001', changeOrigin: true },
+      '/ws':           { target: 'ws://go-audio:8001',   changeOrigin: true, ws: true },
+      '/media-stream': { target: 'ws://go-audio:8001',   changeOrigin: true, ws: true },
+      '/ping':         { target: 'http://go-audio:8001', changeOrigin: true },
+      '/recordings':   { target: 'http://go-audio:8001', changeOrigin: true },
     },
   },
 })

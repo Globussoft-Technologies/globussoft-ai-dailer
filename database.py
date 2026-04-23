@@ -1056,12 +1056,12 @@ def update_user_password(user_id: int, password_hash: str):
 
 # --- CAMPAIGNS ---
 
-def create_campaign(org_id: int, product_id: int, name: str, lead_source: str = None):
+def create_campaign(org_id: int, product_id: int, name: str, lead_source: str = None, channel: str = "voice"):
     conn = get_conn()
     cursor = conn.cursor()
     cursor.execute(
-        "INSERT INTO campaigns (org_id, product_id, name, lead_source) VALUES (%s, %s, %s, %s)",
-        (org_id, product_id, name, lead_source)
+        "INSERT INTO campaigns (org_id, product_id, name, lead_source, channel) VALUES (%s, %s, %s, %s, %s)",
+        (org_id, product_id, name, lead_source, channel or "voice")
     )
     last_id = cursor.lastrowid
     conn.close()
@@ -1097,7 +1097,7 @@ def get_campaign_by_id(campaign_id: int) -> Dict:
     return row
 
 
-def update_campaign(campaign_id: int, name: str = None, status: str = None, lead_source: str = None, product_id: int = None):
+def update_campaign(campaign_id: int, name: str = None, status: str = None, lead_source: str = None, product_id: int = None, channel: str = None):
     conn = get_conn()
     cursor = conn.cursor()
     if name:
@@ -1108,6 +1108,8 @@ def update_campaign(campaign_id: int, name: str = None, status: str = None, lead
         cursor.execute("UPDATE campaigns SET lead_source = %s WHERE id = %s", (lead_source or None, campaign_id))
     if product_id is not None:
         cursor.execute("UPDATE campaigns SET product_id = %s WHERE id = %s", (product_id, campaign_id))
+    if channel is not None:
+        cursor.execute("UPDATE campaigns SET channel = %s WHERE id = %s", (channel, campaign_id))
     conn.close()
     return True
 

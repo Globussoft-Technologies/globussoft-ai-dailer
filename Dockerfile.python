@@ -1,0 +1,50 @@
+# ─── Stage 1: Build React frontend ───────────────────────────────────────────
+FROM node:20-alpine AS frontend-builder
+
+WORKDIR /frontend
+COPY frontend/package.json frontend/package-lock.json* ./
+RUN npm ci --prefer-offline
+COPY frontend/ .
+RUN npm run build
+
+# ─── Stage 2: Python runtime ──────────────────────────────────────────────────
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# System deps:
+#   build-essential  — compiles C extensions (e.g. pymysql, cryptography)
+#   libgomp1         — OpenMP for sentence-transformers / faiss
+#   curl             — health-check fallback
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    g++ \
+    python3-dev \
+    libgomp1 \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python deps first — this layer is cached unless requirements.txt changes
+COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip \
+ && pip install --no-cache-dir -r requirements.txt
+
+# Pre-download sentence-transformers model at build time
+# (avoids 15-20s cold-start download on each container restart)
+RUN python -c "\
+from sentence_transformers import SentenceTransformer; \
+SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')"
+
+# Copy application source (everything not in .dockerignore)
+COPY . .
+
+# Overwrite frontend/dist with the freshly built assets from Stage 1
+COPY --from=frontend-builder /frontend/dist ./frontend/dist
+
+# Recordings directory (should be mounted as a volume in docker-compose)
+RUN mkdir -p /app/recordings /app/faiss_indexes
+
+EXPOSE 8000 50051
+
+# Start gRPC logic server in background, then FastAPI
+CMD ["sh", "-c", "python grpc_server.py & uvicorn main:app --host 0.0.0.0 --port 8000 --workers 2"]

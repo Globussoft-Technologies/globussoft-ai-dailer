@@ -1,0 +1,95 @@
+syntax = "proto3";
+
+package callified.v1;
+
+option go_package = "github.com/globussoft/callified-audio/internal/pb";
+
+// Python implements this server. Go calls it.
+service CallLogicService {
+  // On WebSocket connect: returns system prompt, greeting, voice config
+  rpc InitializeCall(InitCallRequest) returns (InitCallResponse);
+
+  // On each user transcript: streams LLM response as sentence chunks
+  rpc ProcessTranscript(TranscriptRequest) returns (stream SentenceChunk);
+
+  // On call end: triggers recording save, transcript store, background analysis
+  rpc FinalizeCall(FinalizeCallRequest) returns (FinalizeCallResponse);
+
+  // RAG context retrieval
+  rpc RetrieveContext(RAGRequest) returns (RAGResponse);
+}
+
+// ─── InitializeCall ───────────────────────────────────────────────────────────
+
+message InitCallRequest {
+  string lead_name   = 1;
+  string lead_phone  = 2;
+  string interest    = 3;
+  int64  lead_id     = 4;
+  int64  campaign_id = 5;
+  int64  org_id      = 6;
+  string language    = 7; // "hi", "mr", "en", "ta", "te", "bn", "gu", "kn", "ml", "pa"
+  string stream_sid  = 8;
+  string call_sid    = 9; // Exotel/Twilio callSid — used for recording fetch
+}
+
+message InitCallResponse {
+  string system_prompt = 1;
+  string greeting_text = 2;
+  string tts_provider  = 3; // "sarvam" | "elevenlabs" | "smallest"
+  string tts_voice_id  = 4;
+  string tts_language  = 5; // e.g. "hi-IN", "mr-IN"
+  string agent_name    = 6; // e.g. "अर्जुन" or "प्रिया"
+  string language      = 7;
+}
+
+// ─── ProcessTranscript ───────────────────────────────────────────────────────
+
+message ChatMessage {
+  string role = 1; // "user" | "model"
+  string text = 2;
+}
+
+message TranscriptRequest {
+  string              transcript    = 1;
+  string              system_prompt = 2;
+  repeated ChatMessage history      = 3;
+  string              language      = 4;
+  int32               max_tokens    = 5;
+}
+
+message SentenceChunk {
+  string text       = 1;
+  bool   is_last    = 2;
+  bool   has_hangup = 3; // LLM emitted [HANGUP] — Go should begin shutdown sequence
+}
+
+// ─── FinalizeCall ─────────────────────────────────────────────────────────────
+
+message FinalizeCallRequest {
+  string               stream_sid           = 1;
+  int64                lead_id              = 2;
+  int64                campaign_id          = 3;
+  string               call_sid             = 4; // for Exotel recording fetch
+  repeated ChatMessage chat_history         = 5;
+  float                call_duration_s      = 6;
+  bytes                stereo_wav           = 7; // server-side recording (L=user R=AI), may be empty
+  bool                 has_server_recording = 8;
+}
+
+message FinalizeCallResponse {
+  string recording_url = 1; // /api/recordings/<filename> or ""
+  int64  transcript_id = 2;
+}
+
+// ─── RetrieveContext ──────────────────────────────────────────────────────────
+
+message RAGRequest {
+  string query   = 1;
+  int64  lead_id = 2;
+  int64  org_id  = 3;
+}
+
+message RAGResponse {
+  string context = 1;
+}
