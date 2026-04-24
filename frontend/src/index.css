@@ -251,11 +251,19 @@ body {
   background: transparent;
   border: 1px solid rgba(255, 255, 255, 0.1);
   color: #cbd5e1;
-  padding: 8px 16px;
+  padding: 0 14px;
+  height: 38px;
   border-radius: 8px;
   cursor: pointer;
   font-weight: 600;
+  font-size: 0.82rem;
   transition: all 0.2s;
+  white-space: nowrap;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
 }
 .tab-btn.active {
   background: rgba(99, 102, 241, 0.2);
@@ -516,16 +524,10 @@ body {
     gap: 0.75rem;
     padding: 10px 16px;
   }
-  /* Make the tab row horizontally scrollable */
+  /* Make the tab row scrollable on mobile */
   .tab-bar {
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-    scrollbar-width: none; /* Firefox */
     flex-wrap: nowrap !important;
     padding-bottom: 4px;
-  }
-  .tab-bar::-webkit-scrollbar {
-    display: none; /* Chrome/Safari */
   }
   /* User info row: stack below tabs */
   .header-user-info {
@@ -536,11 +538,9 @@ body {
     gap: 8px !important;
   }
   .tab-btn {
-    white-space: nowrap;
-    flex-shrink: 0;
-    font-size: 0.8rem;
-    padding: 8px 12px;
-    min-height: 44px; /* tap target */
+    height: 40px; /* slightly larger tap target on mobile */
+    font-size: 0.78rem;
+    padding: 0 10px;
   }
 
   /* --- Title / Logo --- */

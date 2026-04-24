@@ -33,7 +33,7 @@ export default function TopHeader({
         Globussoft Generative AI Dialer <span className="badge" style={{background: 'rgba(34, 197, 94, 0.2)', color: '#4ade80', ml: 2}}>LIVE</span>
       </div>
 
-      <div className="tab-bar" style={{display: 'flex', gap: '10px', alignItems: 'center', flex: 1}}>
+      <div className="tab-bar" style={{display: 'flex', gap: '8px', alignItems: 'center', flex: 1, flexWrap: 'nowrap'}}>
         <button data-testid="tab-crm" className={`tab-btn ${activeTab === 'crm' ? 'active' : ''}`} onClick={() => navigate('/crm')}>📊 CRM</button>
         {userRole === 'Admin' && <button data-testid="tab-campaigns" className={`tab-btn ${activeTab === 'campaigns' ? 'active' : ''}`} onClick={() => navigate('/campaigns')}>📢 Campaigns</button>}
         {userRole === 'Admin' && <button data-testid="tab-ops" className={`tab-btn ${activeTab === 'ops' ? 'active' : ''}`} onClick={() => navigate('/ops')}>📋 Ops & Tasks</button>}
