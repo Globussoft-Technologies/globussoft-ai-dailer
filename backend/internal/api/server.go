@@ -87,11 +87,19 @@ func (s *Server) SetWAAgent(agent *wa.Agent) {
 // Path patterns use Go 1.22 method+path routing (METHOD /path/{param}).
 func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	auth := s.requireAuth
+	// adminAuth gates an endpoint behind a verified Admin role. Apply to any
+	// route that exposes org-wide config, billing, PII firehoses, team
+	// management, or write operations on shared resources. The frontend hides
+	// these tabs for non-Admins, but without a server-side check a low-privileged
+	// user could call the API directly (OWASP A01: broken access control).
+	adminAuth := s.requireRole("Admin")
 
 	// ── Auth ──────────────────────────────────────────────────────────────────
 	mux.HandleFunc("POST /api/auth/signup", s.signup)
 	mux.HandleFunc("POST /api/auth/login", s.login)
 	mux.HandleFunc("GET /api/auth/me", auth(s.me))
+	mux.HandleFunc("POST /api/auth/forgot-password", s.forgotPassword)
+	mux.HandleFunc("POST /api/auth/reset-password", s.resetPassword)
 
 	// ── Leads ─────────────────────────────────────────────────────────────────
 	// Literal paths must be registered before the {id} wildcard so the mux
@@ -112,35 +120,41 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/leads/{id}/transcripts", auth(s.getLeadTranscripts))
 
 	// ── Campaigns ─────────────────────────────────────────────────────────────
+	// Reads stay open to any authenticated user (CRM agents need to see the
+	// campaigns their leads belong to). Mutations and config writes require
+	// Admin so a non-Admin can't create/modify/delete campaigns or change
+	// per-campaign voice/prompt settings by hitting the API directly.
 	mux.HandleFunc("GET /api/campaigns", auth(s.listCampaigns))
-	mux.HandleFunc("POST /api/campaigns", auth(s.createCampaign))
+	mux.HandleFunc("POST /api/campaigns", adminAuth(s.createCampaign))
 	mux.HandleFunc("GET /api/campaigns/{id}", auth(s.getCampaign))
-	mux.HandleFunc("PUT /api/campaigns/{id}", auth(s.updateCampaign))
-	mux.HandleFunc("DELETE /api/campaigns/{id}", auth(s.deleteCampaign))
+	mux.HandleFunc("PUT /api/campaigns/{id}", adminAuth(s.updateCampaign))
+	mux.HandleFunc("DELETE /api/campaigns/{id}", adminAuth(s.deleteCampaign))
 	mux.HandleFunc("GET /api/campaigns/{id}/leads", auth(s.listCampaignLeads))
-	mux.HandleFunc("POST /api/campaigns/{id}/leads", auth(s.addCampaignLeads))
-	mux.HandleFunc("DELETE /api/campaigns/{id}/leads/{lead_id}", auth(s.removeCampaignLead))
+	mux.HandleFunc("POST /api/campaigns/{id}/leads", adminAuth(s.addCampaignLeads))
+	mux.HandleFunc("DELETE /api/campaigns/{id}/leads/{lead_id}", adminAuth(s.removeCampaignLead))
 	mux.HandleFunc("GET /api/campaigns/{id}/stats", auth(s.getCampaignStats))
 	mux.HandleFunc("GET /api/campaigns/{id}/call-log", auth(s.getCampaignCallLog))
 	mux.HandleFunc("GET /api/campaigns/{id}/voice-settings", auth(s.getCampaignVoiceSettings))
-	mux.HandleFunc("PUT /api/campaigns/{id}/voice-settings", auth(s.saveCampaignVoiceSettings))
-	mux.HandleFunc("POST /api/campaigns/{id}/import-csv", auth(s.importCampaignLeadsCSV))
+	mux.HandleFunc("PUT /api/campaigns/{id}/voice-settings", adminAuth(s.saveCampaignVoiceSettings))
+	mux.HandleFunc("POST /api/campaigns/{id}/import-csv", adminAuth(s.importCampaignLeadsCSV))
 
 	// ── Organizations ─────────────────────────────────────────────────────────
+	// Org-level config (voice, timezone, system prompt) is Admin-only; reads
+	// stay open so a CRM agent can see which voice/timezone is in effect.
 	mux.HandleFunc("GET /api/organizations", auth(s.listOrgs))
-	mux.HandleFunc("POST /api/organizations", auth(s.createOrg))
-	mux.HandleFunc("DELETE /api/organizations/{id}", auth(s.deleteOrg))
+	mux.HandleFunc("POST /api/organizations", adminAuth(s.createOrg))
+	mux.HandleFunc("DELETE /api/organizations/{id}", adminAuth(s.deleteOrg))
 	mux.HandleFunc("GET /api/organizations/{id}/voice-settings", auth(s.getOrgVoiceSettings))
-	mux.HandleFunc("PUT /api/organizations/{id}/voice-settings", auth(s.saveOrgVoiceSettings))
-	mux.HandleFunc("PUT /api/organizations/{id}/timezone", auth(s.updateOrgTimezone))
+	mux.HandleFunc("PUT /api/organizations/{id}/voice-settings", adminAuth(s.saveOrgVoiceSettings))
+	mux.HandleFunc("PUT /api/organizations/{id}/timezone", adminAuth(s.updateOrgTimezone))
 
 	// ── Products ──────────────────────────────────────────────────────────────
 	mux.HandleFunc("GET /api/organizations/{id}/products", auth(s.listProducts))
-	mux.HandleFunc("POST /api/organizations/{id}/products", auth(s.createProduct))
-	mux.HandleFunc("PUT /api/products/{id}", auth(s.updateProduct))
-	mux.HandleFunc("DELETE /api/products/{id}", auth(s.deleteProduct))
+	mux.HandleFunc("POST /api/organizations/{id}/products", adminAuth(s.createProduct))
+	mux.HandleFunc("PUT /api/products/{id}", adminAuth(s.updateProduct))
+	mux.HandleFunc("DELETE /api/products/{id}", adminAuth(s.deleteProduct))
 	mux.HandleFunc("GET /api/products/{id}/prompt", auth(s.getProductPrompt))
-	mux.HandleFunc("PUT /api/products/{id}/prompt", auth(s.updateProductPrompt))
+	mux.HandleFunc("PUT /api/products/{id}/prompt", adminAuth(s.updateProductPrompt))
 
 	// ── Recordings ────────────────────────────────────────────────────────────
 	mux.HandleFunc("GET /api/recordings/{filename}", auth(s.serveRecording))
@@ -152,12 +166,12 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/upload-recording", auth(s.uploadRecording))
 
 	// ── WhatsApp Campaign Blast ────────────────────────────────────────────────
-	mux.HandleFunc("POST /api/wa/campaign-blast/{campaign_id}", auth(s.campaignBlast))
-	mux.HandleFunc("GET /api/wa/campaign-blast/status/{job_id}", auth(s.blastStatus))
+	mux.HandleFunc("POST /api/wa/campaign-blast/{campaign_id}", adminAuth(s.campaignBlast))
+	mux.HandleFunc("GET /api/wa/campaign-blast/status/{job_id}", adminAuth(s.blastStatus))
 
 	// ── Organizations: system prompt ──────────────────────────────────────────
 	mux.HandleFunc("GET /api/organizations/{id}/system-prompt", auth(s.getOrgSystemPrompt))
-	mux.HandleFunc("PUT /api/organizations/{id}/system-prompt", auth(s.saveOrgSystemPrompt))
+	mux.HandleFunc("PUT /api/organizations/{id}/system-prompt", adminAuth(s.saveOrgSystemPrompt))
 
 	// ── Campaign reviews ──────────────────────────────────────────────────────
 	mux.HandleFunc("GET /api/campaigns/{id}/call-reviews", auth(s.getCampaignCallReviews))
@@ -166,43 +180,45 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/transcripts/{id}/review", auth(s.getTranscriptReview))
 
 	// ── DND ───────────────────────────────────────────────────────────────────
+	// /check is a read-only lookup any agent might need before placing a call;
+	// list/add/import/remove modify org-level config so they're Admin-only.
 	mux.HandleFunc("GET /api/dnd/check", auth(s.checkDND))
-	// Path-param flavour the frontend Check button uses
-	// (GET /api/dnd/check/{phone}).
 	mux.HandleFunc("GET /api/dnd/check/{phone}", auth(s.checkDNDByPhone))
-	mux.HandleFunc("GET /api/dnd", auth(s.listDND))
-	mux.HandleFunc("POST /api/dnd", auth(s.addDND))
-	mux.HandleFunc("POST /api/dnd/import-csv", auth(s.importDNDCSV))
-	// Alias for the frontend upload CSV input which posts to /dnd/import.
-	mux.HandleFunc("POST /api/dnd/import", auth(s.importDNDCSV))
-	mux.HandleFunc("DELETE /api/dnd/{id}", auth(s.removeDND))
+	mux.HandleFunc("GET /api/dnd", adminAuth(s.listDND))
+	mux.HandleFunc("POST /api/dnd", adminAuth(s.addDND))
+	mux.HandleFunc("POST /api/dnd/import-csv", adminAuth(s.importDNDCSV))
+	mux.HandleFunc("POST /api/dnd/import", adminAuth(s.importDNDCSV))
+	mux.HandleFunc("DELETE /api/dnd/{id}", adminAuth(s.removeDND))
 
 	// ── Webhooks ──────────────────────────────────────────────────────────────
-	mux.HandleFunc("GET /api/webhooks", auth(s.listWebhooks))
-	mux.HandleFunc("POST /api/webhooks", auth(s.createWebhook))
-	mux.HandleFunc("DELETE /api/webhooks/{id}", auth(s.deleteWebhook))
-	mux.HandleFunc("GET /api/webhooks/{id}/logs", auth(s.getWebhookLogs))
+	mux.HandleFunc("GET /api/webhooks", adminAuth(s.listWebhooks))
+	mux.HandleFunc("POST /api/webhooks", adminAuth(s.createWebhook))
+	mux.HandleFunc("DELETE /api/webhooks/{id}", adminAuth(s.deleteWebhook))
+	mux.HandleFunc("GET /api/webhooks/{id}/logs", adminAuth(s.getWebhookLogs))
 
 	// ── Scheduled calls ───────────────────────────────────────────────────────
-	mux.HandleFunc("GET /api/scheduled-calls", auth(s.listScheduledCalls))
-	mux.HandleFunc("POST /api/scheduled-calls", auth(s.createScheduledCall))
-	mux.HandleFunc("DELETE /api/scheduled-calls/{id}", auth(s.cancelScheduledCall))
+	mux.HandleFunc("GET /api/scheduled-calls", adminAuth(s.listScheduledCalls))
+	mux.HandleFunc("POST /api/scheduled-calls", adminAuth(s.createScheduledCall))
+	mux.HandleFunc("DELETE /api/scheduled-calls/{id}", adminAuth(s.cancelScheduledCall))
 
 	// ── Team ──────────────────────────────────────────────────────────────────
-	mux.HandleFunc("GET /api/team", auth(s.listTeam))
-	mux.HandleFunc("POST /api/team/invite", auth(s.inviteTeamMember))
-	mux.HandleFunc("PUT /api/team/{id}/role", auth(s.updateTeamRole))
-	mux.HandleFunc("DELETE /api/team/{id}", auth(s.deleteTeamMember))
+	// Team management (invite, role change, delete) is strictly Admin.
+	mux.HandleFunc("GET /api/team", adminAuth(s.listTeam))
+	mux.HandleFunc("POST /api/team/invite", adminAuth(s.inviteTeamMember))
+	mux.HandleFunc("PUT /api/team/{id}/role", adminAuth(s.updateTeamRole))
+	mux.HandleFunc("DELETE /api/team/{id}", adminAuth(s.deleteTeamMember))
 
 	// ── API keys ──────────────────────────────────────────────────────────────
-	mux.HandleFunc("GET /api/api-keys", auth(s.listAPIKeys))
-	mux.HandleFunc("POST /api/api-keys", auth(s.createAPIKey))
-	mux.HandleFunc("DELETE /api/api-keys/{id}", auth(s.deleteAPIKey))
+	mux.HandleFunc("GET /api/api-keys", adminAuth(s.listAPIKeys))
+	mux.HandleFunc("POST /api/api-keys", adminAuth(s.createAPIKey))
+	mux.HandleFunc("DELETE /api/api-keys/{id}", adminAuth(s.deleteAPIKey))
 
 	// ── Onboarding ────────────────────────────────────────────────────────────
+	// Reads are open (the App needs status to decide whether to render the
+	// wizard); completing onboarding mutates org-wide config and is Admin-only.
 	mux.HandleFunc("GET /api/onboarding", auth(s.getOnboarding))
 	mux.HandleFunc("GET /api/onboarding/status", auth(s.onboardingStatus))
-	mux.HandleFunc("POST /api/onboarding/complete", auth(s.completeOnboarding))
+	mux.HandleFunc("POST /api/onboarding/complete", adminAuth(s.completeOnboarding))
 
 	// ── Calling status (TRAI guard) ───────────────────────────────────────────
 	mux.HandleFunc("GET /api/calling-status", auth(s.callingStatus))
@@ -212,13 +228,16 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/demo-requests", s.createDemoRequest) // no auth — public form
 
 	// ── WhatsApp legacy logs ──────────────────────────────────────────────────
-	mux.HandleFunc("GET /api/whatsapp", auth(s.listWhatsappLogs))
+	mux.HandleFunc("GET /api/whatsapp", adminAuth(s.listWhatsappLogs))
 
 	// ── Debug / Health ────────────────────────────────────────────────────────
+	// Debug endpoints expose internal state (recent dials, call timelines,
+	// raw log lines) — keep them Admin-only.
 	mux.HandleFunc("GET /api/debug/health", s.debugHealth)
-	mux.HandleFunc("GET /api/debug/logs", auth(s.debugLogs))
-	mux.HandleFunc("GET /api/debug/last-dial", auth(s.debugLastDial))
-	mux.HandleFunc("GET /api/debug/call-timeline", auth(s.debugCallTimeline))
+	mux.HandleFunc("GET /api/debug/logs", adminAuth(s.debugLogs))
+	mux.HandleFunc("GET /api/debug/last-dial", adminAuth(s.debugLastDial))
+	mux.HandleFunc("GET /api/debug/call-timeline", adminAuth(s.debugCallTimeline))
+	mux.HandleFunc("GET /api/debug/recording-config", adminAuth(s.debugRecordingConfig))
 	mux.HandleFunc("GET /ping", s.ping)
 
 	// ── Mobile API (same lead handlers, different prefix) ─────────────────────
@@ -234,11 +253,15 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /mobile/leads/{id}/transcripts", auth(s.getLeadTranscripts))
 
 	// ── Dial ──────────────────────────────────────────────────────────────────
+	// Single-lead dial stays open so a CRM agent can place calls to their
+	// own leads. Bulk dial (dial-all, redial-failed) and the unrestricted
+	// manual-call endpoint are Admin-only — they can fan out calls to many
+	// numbers and have direct billing/reputation impact.
 	mux.HandleFunc("POST /api/dial/{lead_id}", auth(s.dialLead))
 	mux.HandleFunc("POST /api/campaigns/{id}/dial/{lead_id}", auth(s.campaignDialLead))
-	mux.HandleFunc("POST /api/campaigns/{id}/dial-all", auth(s.campaignDialAll))
-	mux.HandleFunc("POST /api/campaigns/{id}/redial-failed", auth(s.campaignRedialFailed))
-	mux.HandleFunc("POST /api/manual-call", auth(s.manualCall))
+	mux.HandleFunc("POST /api/campaigns/{id}/dial-all", adminAuth(s.campaignDialAll))
+	mux.HandleFunc("POST /api/campaigns/{id}/redial-failed", adminAuth(s.campaignRedialFailed))
+	mux.HandleFunc("POST /api/manual-call", adminAuth(s.manualCall))
 
 	// ── Telephony webhooks (no auth — provider-initiated) ──────────────────────
 	mux.HandleFunc("GET /webhook/twilio", s.twilioTwiML)
@@ -252,44 +275,46 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /crm-webhook", s.crmWebhook)
 
 	// ── Analytics (Phase 3A) ──────────────────────────────────────────────────
-	mux.HandleFunc("GET /api/analytics/dashboard", auth(s.analyticsDashboard))
-	mux.HandleFunc("GET /api/analytics/languages", auth(s.analyticsLanguages))
-	mux.HandleFunc("GET /api/analytics/export", auth(s.analyticsExportCSV))
-	mux.HandleFunc("GET /api/analytics/report", auth(s.analyticsExportReport))
-	mux.HandleFunc("GET /api/analytics/scored-leads", auth(s.scoredLeads))
+	// Org-wide analytics surfaces aggregate KPIs and PII counts; Admin-only.
+	mux.HandleFunc("GET /api/analytics/dashboard", adminAuth(s.analyticsDashboard))
+	mux.HandleFunc("GET /api/analytics/languages", adminAuth(s.analyticsLanguages))
+	mux.HandleFunc("GET /api/analytics/export", adminAuth(s.analyticsExportCSV))
+	mux.HandleFunc("GET /api/analytics/report", adminAuth(s.analyticsExportReport))
+	mux.HandleFunc("GET /api/analytics/scored-leads", adminAuth(s.scoredLeads))
 
 	// ── Billing (Phase 3B) ────────────────────────────────────────────────────
+	// Subscribe/cancel/create-order/verify-payment all carry financial impact
+	// and must be Admin. Read endpoints (subscription, usage, invoices) are
+	// also Admin since they expose the org's billing posture.
 	mux.HandleFunc("GET /api/billing/plans", s.listBillingPlans) // public
-	mux.HandleFunc("GET /api/billing/subscription", auth(s.getSubscription))
-	mux.HandleFunc("POST /api/billing/subscription", auth(s.createSubscription))
-	mux.HandleFunc("DELETE /api/billing/subscription", auth(s.cancelSubscription))
-	mux.HandleFunc("GET /api/billing/usage", auth(s.getBillingUsage))
-	mux.HandleFunc("POST /api/billing/subscribe", auth(s.billingSubscribe))
-	mux.HandleFunc("POST /api/billing/cancel", auth(s.cancelBillingPost))
-	mux.HandleFunc("POST /api/billing/create-order", auth(s.createOrder))
-	mux.HandleFunc("POST /api/billing/verify-payment", auth(s.verifyPayment))
-	mux.HandleFunc("GET /api/billing/payments", auth(s.listPayments))
-	mux.HandleFunc("GET /api/billing/invoices", auth(s.listInvoices))
-	mux.HandleFunc("GET /api/billing/invoices/{number}/download", auth(s.downloadInvoice))
+	mux.HandleFunc("GET /api/billing/subscription", adminAuth(s.getSubscription))
+	mux.HandleFunc("POST /api/billing/subscription", adminAuth(s.createSubscription))
+	mux.HandleFunc("DELETE /api/billing/subscription", adminAuth(s.cancelSubscription))
+	mux.HandleFunc("GET /api/billing/usage", adminAuth(s.getBillingUsage))
+	mux.HandleFunc("POST /api/billing/subscribe", adminAuth(s.billingSubscribe))
+	mux.HandleFunc("POST /api/billing/cancel", adminAuth(s.cancelBillingPost))
+	mux.HandleFunc("POST /api/billing/create-order", adminAuth(s.createOrder))
+	mux.HandleFunc("POST /api/billing/verify-payment", adminAuth(s.verifyPayment))
+	mux.HandleFunc("GET /api/billing/payments", adminAuth(s.listPayments))
+	mux.HandleFunc("GET /api/billing/invoices", adminAuth(s.listInvoices))
+	mux.HandleFunc("GET /api/billing/invoices/{number}/download", adminAuth(s.downloadInvoice))
 	mux.HandleFunc("POST /api/billing/webhook", s.razorpayWebhook) // public, HMAC-verified
 
 	// ── WhatsApp Channels & Conversations (Phase 3C) ──────────────────────────
-	mux.HandleFunc("GET /api/wa/channels", auth(s.listWAChannels))
-	mux.HandleFunc("POST /api/wa/channels", auth(s.createWAChannel))
-	mux.HandleFunc("PUT /api/wa/channels/{id}", auth(s.updateWAChannel))
-	mux.HandleFunc("DELETE /api/wa/channels/{id}", auth(s.deleteWAChannel))
-	mux.HandleFunc("PUT /api/wa/channels/{id}/toggle-ai", auth(s.toggleWAAI))
-	mux.HandleFunc("GET /api/wa/conversations", auth(s.listWAConversations))
-	mux.HandleFunc("GET /api/wa/conversations/{id}/history", auth(s.getWAHistory))
-	// Frontend-shape routes (match WhatsAppTab.jsx). Python exposed a
-	// single-config-per-org /api/wa/config and phone-scoped messages/toggle
-	// routes; Go's native /api/wa/channels/* is ID-based. Add these aliases
-	// so the existing UI works without a rewrite.
-	mux.HandleFunc("GET /api/wa/config", auth(s.getWAConfig))
-	mux.HandleFunc("POST /api/wa/config", auth(s.saveWAConfig))
-	mux.HandleFunc("GET /api/wa/conversations/{phone}/messages", auth(s.getWAMessagesByPhone))
-	mux.HandleFunc("POST /api/wa/toggle-ai/{phone}", auth(s.toggleWAAIByPhone))
-	mux.HandleFunc("POST /api/wa/send", auth(s.sendWAMessage))
+	// WhatsApp tab is Admin-only in the nav; all of these manage org-wide
+	// channels, credentials, and outbound message sending.
+	mux.HandleFunc("GET /api/wa/channels", adminAuth(s.listWAChannels))
+	mux.HandleFunc("POST /api/wa/channels", adminAuth(s.createWAChannel))
+	mux.HandleFunc("PUT /api/wa/channels/{id}", adminAuth(s.updateWAChannel))
+	mux.HandleFunc("DELETE /api/wa/channels/{id}", adminAuth(s.deleteWAChannel))
+	mux.HandleFunc("PUT /api/wa/channels/{id}/toggle-ai", adminAuth(s.toggleWAAI))
+	mux.HandleFunc("GET /api/wa/conversations", adminAuth(s.listWAConversations))
+	mux.HandleFunc("GET /api/wa/conversations/{id}/history", adminAuth(s.getWAHistory))
+	mux.HandleFunc("GET /api/wa/config", adminAuth(s.getWAConfig))
+	mux.HandleFunc("POST /api/wa/config", adminAuth(s.saveWAConfig))
+	mux.HandleFunc("GET /api/wa/conversations/{phone}/messages", adminAuth(s.getWAMessagesByPhone))
+	mux.HandleFunc("POST /api/wa/toggle-ai/{phone}", adminAuth(s.toggleWAAIByPhone))
+	mux.HandleFunc("POST /api/wa/send", adminAuth(s.sendWAMessage))
 
 	// ── WhatsApp Provider Webhooks (Phase 3C) ─────────────────────────────────
 	mux.HandleFunc("POST /wa/webhook/gupshup", s.waWebhookGupshup)
@@ -300,41 +325,50 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /wa/webhook/meta", s.waWebhookMeta)
 
 	// ── CRM Integrations (Phase 3C) ───────────────────────────────────────────
-	mux.HandleFunc("GET /api/integrations", auth(s.listIntegrations))
-	mux.HandleFunc("POST /api/integrations", auth(s.createIntegration))
-	mux.HandleFunc("DELETE /api/integrations/{id}", auth(s.deleteIntegration))
+	// External CRM tokens (HubSpot/Salesforce) — credential management is
+	// strictly Admin to prevent data-exfiltration vectors via attacker-owned tokens.
+	mux.HandleFunc("GET /api/integrations", adminAuth(s.listIntegrations))
+	mux.HandleFunc("POST /api/integrations", adminAuth(s.createIntegration))
+	mux.HandleFunc("DELETE /api/integrations/{id}", adminAuth(s.deleteIntegration))
 
 	// ── Knowledge Base (Phase 3C) ─────────────────────────────────────────────
-	mux.HandleFunc("GET /api/knowledge", auth(s.listKnowledge))
-	// POST path matches Python (routes.py:1255) — the RAG tab hits
-	// /api/knowledge/upload. Without /upload the fetch 404s and the
-	// "Upload & Embed PDF" button appears to silently do nothing.
-	mux.HandleFunc("POST /api/knowledge/upload", auth(s.uploadKnowledge))
-	mux.HandleFunc("GET /api/knowledge/{id}/download", auth(s.downloadKnowledge))
-	mux.HandleFunc("DELETE /api/knowledge/{id}", auth(s.deleteKnowledge))
+	// RAG knowledge tab is Admin-only in the nav.
+	mux.HandleFunc("GET /api/knowledge", adminAuth(s.listKnowledge))
+	mux.HandleFunc("POST /api/knowledge/upload", adminAuth(s.uploadKnowledge))
+	mux.HandleFunc("GET /api/knowledge/{id}/download", adminAuth(s.downloadKnowledge))
+	mux.HandleFunc("DELETE /api/knowledge/{id}", adminAuth(s.deleteKnowledge))
 
 	// ── SSE (Phase 3C) ────────────────────────────────────────────────────────
-	mux.HandleFunc("GET /api/sse/live-logs", auth(s.liveLogs))
-	mux.HandleFunc("GET /api/live-logs", auth(s.liveLogs))
-	mux.HandleFunc("GET /api/sse/campaign/{id}/events", auth(s.campaignEvents))
-	mux.HandleFunc("GET /api/campaign-events", auth(s.campaignEventsQuery))
+	// Live log + campaign-event streams contain real lead PII (names + phone
+	// numbers) for the entire org. Lock to Admin so only operators see the
+	// firehose. The SSE auth gate also reads the token from ?token=… since
+	// EventSource can't set Authorization headers (see middleware.bearerToken).
+	mux.HandleFunc("GET /api/sse/live-logs", adminAuth(s.liveLogs))
+	mux.HandleFunc("GET /api/live-logs", adminAuth(s.liveLogs))
+	mux.HandleFunc("GET /api/sse/campaign/{id}/events", adminAuth(s.campaignEvents))
+	mux.HandleFunc("GET /api/campaign-events", adminAuth(s.campaignEventsQuery))
 
 	// ── Test Email (Phase 3B) ─────────────────────────────────────────────────
-	mux.HandleFunc("POST /api/test-email", auth(s.testEmail))
+	mux.HandleFunc("POST /api/test-email", adminAuth(s.testEmail))
 
 	// ── Misc ──────────────────────────────────────────────────────────────────
+	// /tasks and draft-email are agent-facing; reports and pronunciation
+	// belong to Admin (they expose org config / aggregate report data).
 	mux.HandleFunc("GET /api/tasks", auth(s.listTasks))
 	mux.HandleFunc("PUT /api/tasks/{id}/complete", auth(s.completeTask))
-	mux.HandleFunc("GET /api/reports", auth(s.getReports))
-	mux.HandleFunc("GET /api/pronunciation", auth(s.listPronunciations))
-	mux.HandleFunc("POST /api/pronunciation", auth(s.addPronunciation))
-	mux.HandleFunc("DELETE /api/pronunciation/{id}", auth(s.deletePronunciation))
+	mux.HandleFunc("GET /api/reports", adminAuth(s.getReports))
+	mux.HandleFunc("GET /api/pronunciation", adminAuth(s.listPronunciations))
+	mux.HandleFunc("POST /api/pronunciation", adminAuth(s.addPronunciation))
+	mux.HandleFunc("DELETE /api/pronunciation/{id}", adminAuth(s.deletePronunciation))
 
 	// ── Phase 4: LLM generation endpoints ────────────────────────────────────
-	mux.HandleFunc("POST /api/products/{id}/scrape", auth(s.scrapeProduct))
-	mux.HandleFunc("POST /api/products/{id}/generate-prompt", auth(s.generateProductPrompt))
-	mux.HandleFunc("POST /api/products/{id}/generate-persona", auth(s.generateProductPersona))
-	mux.HandleFunc("POST /api/organizations/{id}/generate-prompt", auth(s.generateOrgPrompt))
+	// Generation endpoints touch Gemini/Groq (cost) and rewrite org/product
+	// prompts (config) — Admin-only. draft-email runs against a single lead
+	// and is fine for any agent.
+	mux.HandleFunc("POST /api/products/{id}/scrape", adminAuth(s.scrapeProduct))
+	mux.HandleFunc("POST /api/products/{id}/generate-prompt", adminAuth(s.generateProductPrompt))
+	mux.HandleFunc("POST /api/products/{id}/generate-persona", adminAuth(s.generateProductPersona))
+	mux.HandleFunc("POST /api/organizations/{id}/generate-prompt", adminAuth(s.generateOrgPrompt))
 	mux.HandleFunc("GET /api/leads/{id}/draft-email", auth(s.draftLeadEmail))
 }
 
