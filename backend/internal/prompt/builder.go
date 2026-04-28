@@ -262,13 +262,6 @@ func buildDefaultPrompt(pc promptContext) string {
 
 `)
 
-	// Per-language rule extras (forward signals, rejection detection, direct
-	// question answering, Devanagari list ban). See lang_rules.go.
-	if extras := extraRulesFor(pc.Language, leadFirst); extras != "" {
-		b.WriteString(extras)
-		b.WriteString("\n")
-	}
-
 	// Language directive + register hint + per-language banned words if we have them.
 	fmt.Fprintf(&b, "## LANGUAGE\n- Respond ONLY in %s. %s\n", langLabel, frag.RegisterHint)
 	if frag.BannedWords != "" {

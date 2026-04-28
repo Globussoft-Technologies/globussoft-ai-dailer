@@ -17,7 +17,7 @@ export function CallProvider({ children }) {
   const webCallAudioCtxRef = useRef(null);
 
   const handleDial = useCallback(async (lead) => {
-    setDialingId(lead.id);
+    setDialingId('global');
     try {
       const res = await apiFetch(`${API_URL}/dial/${lead.id}`, { method: "POST" });
       const data = await res.json();
@@ -192,7 +192,7 @@ export function CallProvider({ children }) {
   }, [apiFetch, webCallActive, orgProducts, activeVoiceProvider, activeVoiceId, activeLanguage]);
 
   const handleCampaignDial = useCallback(async (lead, campaignId) => {
-    setDialingId(lead.id);
+    setDialingId('global');
     try {
       await apiFetch(`${API_URL}/campaigns/${campaignId}/dial/${lead.id}`, { method: "POST" });
     } catch(e) {}

@@ -64,36 +64,6 @@ func getAuth(r *http.Request) AuthClaims {
 	return v
 }
 
-// requireRole wraps requireAuth and additionally enforces that the
-// authenticated user's role is one of the allowed values. Returns 403 with
-// no body details on mismatch — we don't tell the caller which role they
-// would need.
-//
-// Existing JWTs minted before role was added to the claims may have an empty
-// Role field; in that case we fall back to a single DB lookup so a long-lived
-// token doesn't accidentally bypass authorization. Subsequent re-logins
-// embed the role and skip the lookup.
-func (s *Server) requireRole(allowed ...string) func(http.HandlerFunc) http.HandlerFunc {
-	return func(next http.HandlerFunc) http.HandlerFunc {
-		return s.requireAuth(func(w http.ResponseWriter, r *http.Request) {
-			ac := getAuth(r)
-			role := ac.Role
-			if role == "" && s.db != nil && ac.Email != "" {
-				if u, err := s.db.GetUserByEmail(ac.Email); err == nil && u != nil {
-					role = u.Role
-				}
-			}
-			for _, want := range allowed {
-				if role == want {
-					next.ServeHTTP(w, r)
-					return
-				}
-			}
-			writeError(w, http.StatusForbidden, "forbidden")
-		})
-	}
-}
-
 // bearerToken extracts the token string from "Authorization: Bearer <token>"
 // or from the "token" query parameter (used by EventSource/SSE which can't set headers).
 func bearerToken(r *http.Request) (string, error) {

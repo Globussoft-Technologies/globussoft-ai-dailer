@@ -78,18 +78,6 @@ func runPipeline(ctx context.Context, sess *CallSession, provider *llm.Provider,
 // already waited 150ms and confirmed it's still current before calling us.
 // Mirrors Python's _process_transcript in ws_handler.py.
 func processTranscript(ctx context.Context, sess *CallSession, transcript string, ts int64, provider *llm.Provider, store *rstore.Store) {
-	// --- Voicemail detection (highest priority — runs before LLM, takeover, etc.) ---
-	// If the carrier picks up with "you have reached…" / "leave a message after the
-	// beep" we abandon LLM, drop a one-sentence pitch, and hang up. Mirrors
-	// main-branch ws_handler.py 4aa3fa3 voicemail handling.
-	if sess.HangupRequested() {
-		return // already heading for hangup; nothing more to do
-	}
-	if isVoicemail(transcript) {
-		handleVoicemail(ctx, sess, transcript)
-		return
-	}
-
 	// --- Check manager takeover ---
 	if store.GetTakeover(ctx, sess.StreamSid) {
 		return

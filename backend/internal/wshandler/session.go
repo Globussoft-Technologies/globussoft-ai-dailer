@@ -318,17 +318,9 @@ func (s *CallSession) HistorySnapshot() []llm.ChatMessage {
 }
 
 // MaxTokens returns the configured max_tokens for the session's language.
-// Tuned to match main-branch ws_handler.py 4aa3fa3 — shorter caps catch
-// monologues earlier and reduce LLM cost on chatty Hindi/Bengali.
 func (s *CallSession) MaxTokens() int32 {
-	switch s.Language {
-	case "hi", "bn":
-		return 80
-	case "mr":
-		return 300
-	case "en":
+	if s.Language == "mr" {
 		return 400
-	default:
-		return 250
 	}
+	return 250
 }
