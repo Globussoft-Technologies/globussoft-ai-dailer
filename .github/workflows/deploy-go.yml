@@ -1,0 +1,79 @@
+# Deploys the Go audio service (callified-go-audio Docker container) to the
+# production VM. Reuses the existing DEPLOY_HOST / DEPLOY_USER / DEPLOY_PASS
+# secrets that the Python deploy workflow already uses — no new infra
+# required.
+#
+# Triggers:
+#   - Manual via the Actions tab (workflow_dispatch). Lets you deploy any
+#     branch on demand without merging to main first.
+#   - Push to main (paths: backend/** | docker-compose.yml). Standard
+#     deploy-on-merge once changes graduate.
+#
+# Why this exists: the original deploy.yml only restarts the legacy Python
+# systemd service. It does NOT rebuild the Go container, so changes to
+# anything under backend/ never made it to prod. This workflow fills that
+# gap.
+
+name: Deploy Go Audio Service
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Branch / tag / SHA to deploy'
+        required: true
+        default: 'feat/go-backend'
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - 'docker-compose.yml'
+      - '.github/workflows/deploy-go.yml'
+
+jobs:
+  deploy-go-audio:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy go-audio container
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          password: ${{ secrets.DEPLOY_PASS }}
+          # Long-running build: bumps default 10m to 20m so a cold cache or
+          # slow apt step in the Dockerfile doesn't time-out the SSH session.
+          command_timeout: 20m
+          script: |
+            set -e
+            REF="${{ github.event.inputs.ref || github.ref_name }}"
+            echo "==> Deploying ref: $REF"
+
+            cd ~/callified-ai
+
+            # Stash any uncommitted local edits on the prod box so git
+            # checkout can switch branches cleanly. Same pattern the
+            # Python deploy.yml uses.
+            git stash 2>/dev/null || true
+
+            git fetch --all --prune
+            git checkout "$REF" 2>/dev/null || git checkout -b "$REF" "origin/$REF"
+            git reset --hard "origin/$REF"
+
+            echo "==> Rebuilding callified-go-audio image"
+            echo "${{ secrets.DEPLOY_PASS }}" | sudo -S docker compose up -d --no-deps --build go-audio
+
+            echo "==> Waiting for healthcheck"
+            for i in 1 2 3 4 5 6 7 8 9 10; do
+              if curl -sf http://localhost:8001/api/debug/health >/dev/null; then
+                echo "==> Health OK"
+                break
+              fi
+              if [ "$i" = "10" ]; then
+                echo "==> Health check failed after 10 attempts; dumping container logs"
+                sudo docker logs --tail 80 callified-go-audio || true
+                exit 1
+              fi
+              sleep 2
+            done
+
+            echo "==> Deploy successful: $(git rev-parse --short HEAD) on $REF"
