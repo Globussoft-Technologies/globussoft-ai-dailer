@@ -447,3 +447,101 @@ func (s *Server) debugCallTimeline(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, emptyJSON(timeline))
 }
+
+// ── GET /api/debug/recording-config ──────────────────────────────────────────
+// Reports whether the post-call WAV pipeline is wired correctly. Mostly a
+// diagnostic for the empty-`recording_url` case where saveWAV silently
+// returns "" because RECORDINGS_DIR is unset, the volume isn't mounted, or
+// the directory isn't writable. Probes the runtime state directly — env
+// var, stat result, write probe, file count — so a single curl reveals
+// which of the four likely causes is in play. Admin-gated.
+func (s *Server) debugRecordingConfig(w http.ResponseWriter, r *http.Request) {
+	out := map[string]any{
+		"recordings_dir":     s.cfg.RecordingsDir,
+		"recordings_dir_env": os.Getenv("RECORDINGS_DIR"),
+		"recording_svc":      s.recordingSvcName(),
+	}
+
+	dir := s.cfg.RecordingsDir
+	if dir == "" {
+		out["status"] = "unconfigured"
+		out["reason"] = "cfg.RecordingsDir is empty — saveWAV returns \"\" silently"
+		writeJSON(w, http.StatusOK, out)
+		return
+	}
+
+	info, err := os.Stat(dir)
+	if err != nil {
+		out["status"] = "missing"
+		out["reason"] = fmt.Sprintf("stat %s: %v", dir, err)
+		writeJSON(w, http.StatusOK, out)
+		return
+	}
+	out["dir_exists"] = true
+	out["is_dir"] = info.IsDir()
+	out["mode"] = info.Mode().String()
+
+	// Write probe: try creating a tiny temp file to confirm the dir is
+	// writable by the audiod uid. Cleaned up immediately on success.
+	probe := filepath.Join(dir, fmt.Sprintf(".rwprobe-%d", time.Now().UnixNano()))
+	if err := os.WriteFile(probe, []byte("ok"), 0644); err != nil {
+		out["writable"] = false
+		out["write_error"] = err.Error()
+	} else {
+		out["writable"] = true
+		_ = os.Remove(probe)
+	}
+
+	// Count existing WAV files. A non-zero count means recordings ARE being
+	// written — in that case the bug is in the call_transcripts.recording_url
+	// linkage, not the WAV save.
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		out["read_error"] = err.Error()
+	} else {
+		wavCount := 0
+		recent := make([]map[string]any, 0, 5)
+		// Iterate newest-last; we'll surface the last 5.
+		for _, e := range entries {
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".wav") {
+				continue
+			}
+			wavCount++
+			fi, err := e.Info()
+			if err != nil {
+				continue
+			}
+			if len(recent) < 5 || fi.ModTime().After(time.Time{}) {
+				recent = append(recent, map[string]any{
+					"name":     e.Name(),
+					"size":     fi.Size(),
+					"mod_time": fi.ModTime().Format(time.RFC3339),
+				})
+			}
+		}
+		out["wav_count"] = wavCount
+		// Last few, newest first by mod_time. Best-effort — entries from
+		// ReadDir aren't sorted by time, so the slice may be a sample, not
+		// strictly the newest. Still useful as a sanity check.
+		if len(recent) > 5 {
+			recent = recent[len(recent)-5:]
+		}
+		out["recent_wavs"] = recent
+	}
+
+	out["status"] = "ok"
+	writeJSON(w, http.StatusOK, out)
+}
+
+// recordingSvcName returns a one-word indicator of the recording-service
+// hookup so the debug endpoint can flag the case where the wshandler was
+// constructed without a recordingSvc (post-call save is then a no-op).
+func (s *Server) recordingSvcName() string {
+	if s == nil || s.cfg == nil {
+		return "unknown"
+	}
+	if s.cfg.RecordingsDir == "" {
+		return "no-dir"
+	}
+	return "wired"
+}

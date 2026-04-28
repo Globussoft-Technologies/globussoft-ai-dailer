@@ -1,9 +1,16 @@
 /**
+ * Default display timezone when no explicit `timezone` is passed. Operators
+ * are in India — UTC server time is hard to read at a glance — so we default
+ * to IST. Pass an explicit IANA timezone to override per-org.
+ */
+const DEFAULT_TZ = 'Asia/Kolkata';
+
+/**
  * Format a timestamp string from the database into the org's timezone.
  * MySQL TIMESTAMP is stored as UTC — we append 'Z' if missing so JS parses it correctly.
  *
  * @param {string} dateStr - Date string from DB (e.g. "2026-04-01 12:34:56" or ISO)
- * @param {string} timezone - IANA timezone (e.g. "Asia/Kolkata"), defaults to browser local
+ * @param {string} timezone - IANA timezone (e.g. "Asia/Kolkata"); defaults to IST
  * @param {object} opts - Additional Intl.DateTimeFormat options
  * @returns {string} Formatted date string
  */
@@ -19,7 +26,7 @@ export function formatDateTime(dateStr, timezone, opts = {}) {
     hour: '2-digit', minute: '2-digit',
     hour12: true,
     ...opts,
-    ...(timezone ? { timeZone: timezone } : {})
+    timeZone: timezone || DEFAULT_TZ,
   };
   return date.toLocaleString(undefined, options);
 }
@@ -35,7 +42,7 @@ export function formatDate(dateStr, timezone) {
 
   const options = {
     year: 'numeric', month: 'short', day: 'numeric',
-    ...(timezone ? { timeZone: timezone } : {})
+    timeZone: timezone || DEFAULT_TZ,
   };
   return date.toLocaleDateString(undefined, options);
 }
@@ -51,7 +58,7 @@ export function formatTime(dateStr, timezone) {
 
   const options = {
     hour: '2-digit', minute: '2-digit', hour12: true,
-    ...(timezone ? { timeZone: timezone } : {})
+    timeZone: timezone || DEFAULT_TZ,
   };
   return date.toLocaleTimeString(undefined, options);
 }

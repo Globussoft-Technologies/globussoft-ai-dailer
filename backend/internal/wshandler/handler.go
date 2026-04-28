@@ -146,6 +146,20 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// Continue with defaults — don't abort the call
 	}
 
+	// --- Voice consistency cache (lead_voice:{id}, 90-day TTL) ---
+	// Same lead reliably hears the same agent voice across calls (ported from
+	// main-branch ws_handler.py 4aa3fa3). Best-effort: errors are swallowed.
+	if h.store != nil && sess.LeadID != 0 && sess.TTSVoiceID != "" {
+		voice, fromCache := h.store.ResolveLeadVoice(ctx, sess.LeadID, sess.TTSVoiceID)
+		if fromCache && voice != sess.TTSVoiceID {
+			h.log.Info("voice cache: using cached voice",
+				zap.Int64("lead_id", sess.LeadID),
+				zap.String("from", sess.TTSVoiceID),
+				zap.String("to", voice))
+			sess.TTSVoiceID = voice
+		}
+	}
+
 	// --- Select TTS provider ---
 	// Store the instance on the session so runTTSWorker (which reads it every
 	// sentence) and the greeting dispatch can both use it. Previously this was
@@ -159,9 +173,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// --- Start Deepgram STT client ---
-	dgClient := stt.NewClient(h.cfg.DeepgramAPIKey, sess.Language, h.log)
-	dgClient.OnTranscript = func(text string) {
-		// Record STT TTFB once per call (first transcript)
+	// Build the transcript callback once and share it between single and dual
+	// clients. Dual mode runs primary (multi/lang) + secondary (hi) in parallel
+	// and merges by confidence within 300ms — recovers Hindi misclassified by
+	// Deepgram's "multi" mode. Mirrors main-branch ws_handler.py 4aa3fa3.
+	onTranscript := func(text string) {
 		if first, elapsed := sess.MarkSTTFirst(); first {
 			metrics.STTFirstByteLatency.Observe(elapsed)
 		}
@@ -173,7 +189,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		default:
 		}
 	}
-	dgClient.OnSpeechStarted = func() {
+	onSpeechStarted := func() {
 		if sess.IsTTSPlaying() {
 			metrics.BargeIns.Inc()
 		}
@@ -185,12 +201,28 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	var wg sync.WaitGroup
 
-	// g2: STT goroutine
+	// g2: STT goroutine — DualClient for non-Hindi/non-English Indian languages,
+	// single client otherwise. Hindi already uses Deepgram's dedicated nova-2
+	// hi model; English uses nova-2 en — no benefit from a parallel hi connection.
+	useDualSTT := sess.Language != "hi" && sess.Language != "en" && sess.Language != ""
 	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		dgClient.Run(ctx, sess.AudioIn)
-	}()
+	if useDualSTT {
+		dual := stt.NewDualClient(h.cfg.DeepgramAPIKey, sess.Language, "hi", h.log)
+		dual.OnTranscript = onTranscript
+		dual.OnSpeechStarted = onSpeechStarted
+		go func() {
+			defer wg.Done()
+			dual.Run(ctx, sess.AudioIn)
+		}()
+	} else {
+		dgClient := stt.NewClient(h.cfg.DeepgramAPIKey, sess.Language, h.log)
+		dgClient.OnTranscript = onTranscript
+		dgClient.OnSpeechStarted = onSpeechStarted
+		go func() {
+			defer wg.Done()
+			dgClient.Run(ctx, sess.AudioIn)
+		}()
+	}
 
 	// g4: Pipeline orchestrator
 	wg.Add(1)

@@ -25,6 +25,11 @@ type Client struct {
 
 	OnTranscript   func(text string)
 	OnSpeechStarted func()
+
+	// OnTranscriptWithConf is an optional secondary callback that also receives
+	// the per-utterance confidence (0..1). Set it to drive dual-STT merging
+	// (see dual.go). Both callbacks are invoked when both are set.
+	OnTranscriptWithConf func(text string, confidence float64)
 }
 
 // NewClient creates a Deepgram STT client.
@@ -151,7 +156,8 @@ type deepgramMsg struct {
 	IsFinal bool   `json:"is_final"`
 	Channel struct {
 		Alternatives []struct {
-			Transcript string `json:"transcript"`
+			Transcript string  `json:"transcript"`
+			Confidence float64 `json:"confidence"`
 		} `json:"alternatives"`
 	} `json:"channel"`
 }
@@ -164,9 +170,15 @@ func (c *Client) handleMessage(raw []byte) {
 	switch msg.Type {
 	case "Results":
 		if msg.IsFinal && len(msg.Channel.Alternatives) > 0 {
-			text := msg.Channel.Alternatives[0].Transcript
-			if text != "" && c.OnTranscript != nil {
-				c.OnTranscript(text)
+			alt := msg.Channel.Alternatives[0]
+			if alt.Transcript == "" {
+				return
+			}
+			if c.OnTranscript != nil {
+				c.OnTranscript(alt.Transcript)
+			}
+			if c.OnTranscriptWithConf != nil {
+				c.OnTranscriptWithConf(alt.Transcript, alt.Confidence)
 			}
 		}
 	case "SpeechStarted":
