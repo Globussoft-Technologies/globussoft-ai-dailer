@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import CampaignDetail from '../campaigns/CampaignDetail';
 import CampaignModals from '../campaigns/CampaignModals';
 import { CAMPAIGN_TEMPLATES } from '../../constants/campaignTemplates';
+import { useAuth } from '../../contexts/AuthContext';
 
 export default function CampaignsTab({
   campaigns, fetchCampaigns, orgProducts, leads,
@@ -12,6 +13,7 @@ export default function CampaignsTab({
   INDIAN_VOICES, INDIAN_LANGUAGES,
   dialingId, webCallActive, orgTimezone
 }) {
+  const { fetchSseTicket } = useAuth();
   const [view, setView] = useState('list'); // 'list' or 'detail'
   const [selectedCampaign, setSelectedCampaign] = useState(null);
   const [campaignLeads, setCampaignLeads] = useState([]);
@@ -29,6 +31,10 @@ export default function CampaignsTab({
   const [liveEvents, setLiveEvents] = useState([]);
   const [showEditCampaignModal, setShowEditCampaignModal] = useState(false);
   const [editCampaignForm, setEditCampaignForm] = useState({ name: '', product_id: '', lead_source: '' });
+  // ID of the campaign whose row is currently showing the inline "Delete? Yes No"
+  // prompt. Null when no row is in confirm mode.
+  const [deleteConfirmId, setDeleteConfirmId] = useState(null);
+  const [deleting, setDeleting] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState(null);
   const [createError, setCreateError] = useState('');
   const eventSourceRef = React.useRef(null);
@@ -36,6 +42,27 @@ export default function CampaignsTab({
   const [campVoiceSaveStatus, setCampVoiceSaveStatus] = useState(''); // '', 'saving', 'saved', 'error'
 
   useEffect(() => { fetchCampaigns(); }, []);
+
+  // Open a specific campaign's detail directly when ?id=N is in the URL —
+  // lets the CRM dashboard's "Active Campaigns" cards navigate straight into
+  // the right campaign instead of dropping the user on the list (issue #40).
+  // Runs whenever the campaigns array refreshes so we can resolve the id
+  // once the list has loaded; clears the param afterwards so a Back-to-list
+  // doesn't keep re-opening the same campaign.
+  useEffect(() => {
+    if (view === 'detail') return;
+    if (!Array.isArray(campaigns) || campaigns.length === 0) return;
+    const params = new URLSearchParams(window.location.search);
+    const idStr = params.get('id');
+    if (!idStr) return;
+    const id = parseInt(idStr, 10);
+    if (!Number.isFinite(id)) return;
+    const target = campaigns.find(c => c.id === id);
+    if (!target) return;
+    handleViewCampaign(target);
+    // Strip ?id= from the URL so refreshes / Back don't loop.
+    window.history.replaceState({}, '', window.location.pathname);
+  }, [campaigns, view]);
 
   const fetchCampaignLeads = async (campaignId) => {
     try {
@@ -112,21 +139,26 @@ export default function CampaignsTab({
     fetchCampaigns();
   };
 
-  const startEventStream = (campaignId) => {
+  const startEventStream = async (campaignId) => {
     stopEventStream();
-    const token = localStorage.getItem('authToken');
-    if (!token) return;
-    const es = new EventSource(`${API_URL}/campaign-events?token=${token}&campaign_id=${campaignId}`);
+    let ticket;
+    try { ticket = await fetchSseTicket(); } catch (_) { return; }
+    const es = new EventSource(`${API_URL}/campaign-events?ticket=${encodeURIComponent(ticket)}&campaign_id=${campaignId}`);
     es.onmessage = (e) => {
       // Backend publishes a JSON envelope with a pre-formatted `label` field;
       // legacy events arrive as plain strings, so fall back to the raw line
       // when JSON parse fails or no label is present.
       let display = e.data;
+      let ts = Date.now();
       try {
         const j = JSON.parse(e.data);
         if (j && j.label) display = j.label;
+        if (j && j.ts) {
+          const parsed = new Date(j.ts).getTime();
+          if (!Number.isNaN(parsed)) ts = parsed;
+        }
       } catch (_) { /* plain-text legacy event */ }
-      setLiveEvents(prev => [...prev.slice(-49), display]);
+      setLiveEvents(prev => [...prev.slice(-49), { ts, label: display }]);
     };
     es.onerror = () => es.close();
     eventSourceRef.current = es;
@@ -200,12 +232,18 @@ export default function CampaignsTab({
     }
   };
 
-  const handleDeleteCampaign = async (campaignId) => {
-    if (!window.confirm('Delete this campaign and remove all lead associations?')) return;
+  const confirmDeleteCampaign = async (campaignId) => {
+    if (deleting) return;
+    setDeleting(true);
     try {
       await apiFetch(`${API_URL}/campaigns/${campaignId}`, { method: 'DELETE' });
+      setDeleteConfirmId(null);
       fetchCampaigns();
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setDeleting(false);
+    }
   };
 
   const handleToggleStatus = async (campaign) => {
@@ -468,18 +506,18 @@ export default function CampaignsTab({
             return (
               <div key={campaign.id} className="glass-panel" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '10px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                  <div>
-                    <div style={{fontWeight: 700, fontSize: '1.05rem', color: '#e2e8f0', marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '8px'}}>
+                  <div style={{minWidth: 0, flex: 1}}>
+                    <div style={{fontWeight: 700, fontSize: '1.05rem', color: '#e2e8f0', marginBottom: '8px', wordBreak: 'break-word'}}>
                       {campaign.name}
+                    </div>
+                    <div style={{display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap'}}>
                       <span style={{
                         background: campaign.channel === 'whatsapp' ? 'rgba(37,211,102,0.15)' : 'rgba(99,102,241,0.15)',
                         color: campaign.channel === 'whatsapp' ? '#25D366' : '#818cf8',
-                        fontSize: '0.65rem', padding: '2px 7px', borderRadius: '12px', fontWeight: 600, flexShrink: 0
+                        fontSize: '0.7rem', padding: '2px 8px', borderRadius: '10px', fontWeight: 600
                       }}>
                         {campaign.channel === 'whatsapp' ? '💬 WhatsApp' : '📞 Voice'}
                       </span>
-                    </div>
-                    <div style={{display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap'}}>
                       {campaign.product_id && (
                         <span style={{ background: 'rgba(6,182,212,0.2)', color: '#22d3ee', fontSize: '0.7rem', padding: '2px 8px', borderRadius: '10px', fontWeight: 600 }}>
                           {getProductName(campaign.product_id)}
@@ -488,21 +526,48 @@ export default function CampaignsTab({
                       {statusBadge(campaign.status || 'active')}
                     </div>
                   </div>
-                  <div style={{ display: 'flex', gap: '6px' }}>
-                    <button onClick={(e) => { e.stopPropagation(); handleEditCampaign(campaign); }}
-                      style={{
-                        background: 'rgba(250,204,21,0.1)', border: '1px solid rgba(250,204,21,0.3)',
-                        color: '#facc15', borderRadius: '6px', padding: '4px 8px', cursor: 'pointer', fontSize: '0.7rem'
-                      }}>
-                      Edit
-                    </button>
-                    <button onClick={() => handleDeleteCampaign(campaign.id)}
-                      style={{
-                        background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)',
-                        color: '#fca5a5', borderRadius: '6px', padding: '4px 8px', cursor: 'pointer', fontSize: '0.7rem'
-                      }}>
-                      Delete
-                    </button>
+                  <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                    {deleteConfirmId === campaign.id ? (
+                      <>
+                        <span style={{color: '#fca5a5', fontSize: '0.75rem'}}>Delete?</span>
+                        <button onClick={(e) => { e.stopPropagation(); confirmDeleteCampaign(campaign.id); }}
+                          disabled={deleting}
+                          style={{
+                            background: 'rgba(239,68,68,0.2)', border: '1px solid rgba(239,68,68,0.5)',
+                            color: '#fca5a5', borderRadius: '6px', padding: '4px 10px',
+                            cursor: deleting ? 'not-allowed' : 'pointer', fontSize: '0.7rem', fontWeight: 600,
+                            opacity: deleting ? 0.6 : 1,
+                          }}>
+                          {deleting ? '…' : 'Yes'}
+                        </button>
+                        <button onClick={(e) => { e.stopPropagation(); setDeleteConfirmId(null); }}
+                          disabled={deleting}
+                          style={{
+                            background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)',
+                            color: '#cbd5e1', borderRadius: '6px', padding: '4px 10px',
+                            cursor: deleting ? 'not-allowed' : 'pointer', fontSize: '0.7rem',
+                          }}>
+                          No
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button onClick={(e) => { e.stopPropagation(); handleEditCampaign(campaign); }}
+                          style={{
+                            background: 'rgba(250,204,21,0.1)', border: '1px solid rgba(250,204,21,0.3)',
+                            color: '#facc15', borderRadius: '6px', padding: '4px 8px', cursor: 'pointer', fontSize: '0.7rem'
+                          }}>
+                          Edit
+                        </button>
+                        <button onClick={(e) => { e.stopPropagation(); setDeleteConfirmId(campaign.id); }}
+                          style={{
+                            background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)',
+                            color: '#fca5a5', borderRadius: '6px', padding: '4px 8px', cursor: 'pointer', fontSize: '0.7rem'
+                          }}>
+                          Delete
+                        </button>
+                      </>
+                    )}
                   </div>
                 </div>
 
@@ -559,6 +624,7 @@ export default function CampaignsTab({
         setEditCampaignForm={setEditCampaignForm}
         handleSaveEditCampaign={handleSaveEditCampaign}
       />
+
     </div>
   );
 }

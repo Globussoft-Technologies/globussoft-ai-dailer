@@ -51,7 +51,26 @@ export default function Sandbox({ apiUrl }) {
 
   const startSandbox = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Default getUserMedia({audio: true}) silently enables aggressive echo
+      // cancellation, noise suppression, and AGC. With the AI's TTS playing
+      // through the speakers, AEC was treating the user's own voice as echo
+      // and attenuating it — Deepgram saw audio energy of ~90 (near silence)
+      // even when the user spoke clearly. Turning the processing off here
+      // makes the mic pass through speech at normal levels. (issue #33)
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+        },
+      });
+      // 16 kHz is well-supported across browsers. We then downsample by 2 to
+      // 8 kHz before sending so the bytes match what Deepgram expects
+      // (sample_rate=8000, encoding=linear16). Asking the browser directly for
+      // 8 kHz didn't work reliably — Chrome silently fell back to 48 kHz on
+      // macOS while still labelling the buffer as 8 kHz, producing audio that
+      // Deepgram couldn't recognise (transcripts came back with confidence 0).
+      // (issue #33)
       const audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
       audioContextRef.current = audioContext;
 
@@ -63,6 +82,11 @@ export default function Sandbox({ apiUrl }) {
         lead_id: '0',
         tts_provider: provider,
         voice: voiceId,
+        // "multi" tells the backend to put Deepgram in multi-language mode so
+        // STT works for whichever language the tester speaks (English, Hindi,
+        // Tamil, etc). Without this it would default to English-only and
+        // return empty transcripts for any non-English speech. (issue #33)
+        tts_language: 'multi',
       }).toString();
 
       let wsUrl;
@@ -94,9 +118,13 @@ export default function Sandbox({ apiUrl }) {
         processor.onaudioprocess = (e) => {
           if (ws.readyState !== WebSocket.OPEN || micMuted) return;
           const float32Array = e.inputBuffer.getChannelData(0);
-          const int16Buffer = new Int16Array(float32Array.length);
-          for (let i = 0; i < float32Array.length; i++) {
-            let s = Math.max(-1, Math.min(1, float32Array[i]));
+          // Downsample 16 kHz → 8 kHz by taking every other sample. Speech
+          // energy is well below 4 kHz so a low-pass filter isn't strictly
+          // necessary; the alias headroom is fine for STT.
+          const outLen = Math.floor(float32Array.length / 2);
+          const int16Buffer = new Int16Array(outLen);
+          for (let i = 0; i < outLen; i++) {
+            let s = Math.max(-1, Math.min(1, float32Array[i * 2]));
             int16Buffer[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
           }
           let binary = '';
@@ -129,10 +157,11 @@ export default function Sandbox({ apiUrl }) {
             bufferSource.start(startAt);
             nextPlayTime = startAt + audioBuffer.duration;
             unmuteTimer = setTimeout(() => { micMuted = false; }, (nextPlayTime - now) * 1000 + 200);
-          } else if (data.event === 'transcript' || data.event === 'user_speech') {
-            setTranscripts(prev => [...prev, { role: 'user', text: data.text }]);
-          } else if (data.event === 'llm_response') {
-            setTranscripts(prev => [...prev, { role: 'assistant', text: data.text }]);
+          } else if (data.type === 'transcript') {
+            // Backend sends {type:"transcript", role:"user"|"agent", text}.
+            // Map "agent" → "assistant" for the existing render styling.
+            const role = data.role === 'agent' ? 'assistant' : data.role;
+            if (role && data.text) setTranscripts(prev => [...prev, { role, text: data.text }]);
           }
         };
       };

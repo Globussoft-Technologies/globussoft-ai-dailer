@@ -1,7 +1,20 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { useAuth } from '../../contexts/AuthContext';
 
 const PER_PAGE = 50;
 const ACTIVITY_BUFFER = 1000;
+
+function withDate(label, tsMs) {
+  const d = new Date(tsMs);
+  const dd = String(d.getDate()).padStart(2, '0');
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const yyyy = d.getFullYear();
+  const dateStr = `${dd}/${mm}/${yyyy}`;
+  if (/\[\d{2}:\d{2}:\d{2}\]/.test(label)) {
+    return label.replace(/\[(\d{2}:\d{2}:\d{2})\]/, `[${dateStr} $1]`);
+  }
+  return `[${dateStr}] ${label}`;
+}
 
 // Each entry in activityLogs is { arrivedAt: number, line: string } so the
 // date filter has a real timestamp even when the backend is still sending
@@ -39,6 +52,7 @@ function parseActivity(entry) {
 }
 
 export default function LogsTab({ API_URL, authToken, apiFetch }) {
+  const { fetchSseTicket } = useAuth();
   const [mode, setMode] = useState('activity');
   const [filter, setFilter] = useState('');
   const [paused, setPaused] = useState(false);
@@ -72,49 +86,59 @@ export default function LogsTab({ API_URL, authToken, apiFetch }) {
     if (activityEsRef.current) activityEsRef.current.close();
     const cid = campaignFilter || '0';
     setActivityLogs([]); // discard previous campaign's buffer on switch
-    const es = new EventSource(`${API_URL}/campaign-events?token=${authToken}&campaign_id=${cid}`);
-    es.onmessage = (ev) => {
-      if (!paused) {
-        setActivityLogs(prev => [...prev.slice(-ACTIVITY_BUFFER), { arrivedAt: Date.now(), line: ev.data }]);
-      }
-    };
-    activityEsRef.current = es;
-    return () => es.close();
-  }, [paused, campaignFilter, API_URL, authToken]);
+    let cancelled = false;
+    let es = null;
+    fetchSseTicket().then(ticket => {
+      if (cancelled) return;
+      es = new EventSource(`${API_URL}/campaign-events?ticket=${encodeURIComponent(ticket)}&campaign_id=${cid}`);
+      es.onmessage = (ev) => {
+        if (!paused) {
+          setActivityLogs(prev => [...prev.slice(-ACTIVITY_BUFFER), { arrivedAt: Date.now(), line: ev.data }]);
+        }
+      };
+      activityEsRef.current = es;
+    }).catch(() => { /* surface via console only — UI shows empty stream */ });
+    return () => { cancelled = true; if (es) es.close(); };
+  }, [paused, campaignFilter, API_URL, fetchSseTicket]);
 
   useEffect(() => {
     if (mode !== 'verbose' || !verboseRef.current) return;
     if (verboseEsRef.current) verboseEsRef.current.close();
     const el = verboseRef.current;
     el.innerHTML = '';
-    const es = new EventSource(`${API_URL}/live-logs?token=${authToken}`);
-    es.onmessage = (ev) => {
-      if (paused) return;
-      if (filter && !ev.data.toLowerCase().includes(filter.toLowerCase())) return;
-      const line = document.createElement('div');
-      line.textContent = ev.data;
-      line.style.padding = '3px 12px';
-      line.style.fontFamily = '"JetBrains Mono", "Fira Code", monospace';
-      line.style.fontSize = '0.75rem';
-      line.style.borderBottom = '1px solid rgba(255,255,255,0.03)';
-      line.style.lineHeight = '1.4';
-      if (ev.data.includes('ERROR')) { line.style.color = '#f87171'; line.style.background = 'rgba(239,68,68,0.06)'; }
-      else if (ev.data.includes('WARNING')) { line.style.color = '#fbbf24'; }
-      else if (ev.data.includes('[STT]')) { line.style.color = '#4ade80'; }
-      else if (ev.data.includes('[LLM]')) { line.style.color = '#67e8f9'; }
-      else if (ev.data.includes('TTS')) { line.style.color = '#a78bfa'; }
-      else if (ev.data.includes('GREETING') || ev.data.includes('RECORDING')) { line.style.color = '#f59e0b'; }
-      else if (ev.data.includes('DIAL') || ev.data.includes('EXOTEL')) { line.style.color = '#60a5fa'; }
-      else if (ev.data.includes('HANGUP') || ev.data.includes('CLOSED')) { line.style.color = '#fb923c'; }
-      else if (ev.data.includes('DEBUG-REC')) { line.style.color = '#22d3ee'; }
-      else { line.style.color = '#64748b'; }
-      el.appendChild(line);
-      if (el.children.length > 500) el.removeChild(el.firstChild);
-      el.scrollTop = el.scrollHeight;
-    };
-    verboseEsRef.current = es;
-    return () => es.close();
-  }, [mode, paused, filter]);
+    let cancelled = false;
+    let es = null;
+    fetchSseTicket().then(ticket => {
+      if (cancelled || !verboseRef.current) return;
+      es = new EventSource(`${API_URL}/live-logs?ticket=${encodeURIComponent(ticket)}`);
+      verboseEsRef.current = es;
+      es.onmessage = (ev) => {
+        if (paused) return;
+        if (filter && !ev.data.toLowerCase().includes(filter.toLowerCase())) return;
+        const line = document.createElement('div');
+        line.textContent = ev.data;
+        line.style.padding = '3px 12px';
+        line.style.fontFamily = '"JetBrains Mono", "Fira Code", monospace';
+        line.style.fontSize = '0.75rem';
+        line.style.borderBottom = '1px solid rgba(255,255,255,0.03)';
+        line.style.lineHeight = '1.4';
+        if (ev.data.includes('ERROR')) { line.style.color = '#f87171'; line.style.background = 'rgba(239,68,68,0.06)'; }
+        else if (ev.data.includes('WARNING')) { line.style.color = '#fbbf24'; }
+        else if (ev.data.includes('[STT]')) { line.style.color = '#4ade80'; }
+        else if (ev.data.includes('[LLM]')) { line.style.color = '#67e8f9'; }
+        else if (ev.data.includes('TTS')) { line.style.color = '#a78bfa'; }
+        else if (ev.data.includes('GREETING') || ev.data.includes('RECORDING')) { line.style.color = '#f59e0b'; }
+        else if (ev.data.includes('DIAL') || ev.data.includes('EXOTEL')) { line.style.color = '#60a5fa'; }
+        else if (ev.data.includes('HANGUP') || ev.data.includes('CLOSED')) { line.style.color = '#fb923c'; }
+        else if (ev.data.includes('DEBUG-REC')) { line.style.color = '#22d3ee'; }
+        else { line.style.color = '#64748b'; }
+        el.appendChild(line);
+        if (el.children.length > 500) el.removeChild(el.firstChild);
+        el.scrollTop = el.scrollHeight;
+      };
+    }).catch(() => { /* UI shows empty stream */ });
+    return () => { cancelled = true; if (es) es.close(); };
+  }, [mode, paused, filter, API_URL, fetchSseTicket]);
 
   const activityIcon = (text) => {
     if (text.includes('📞')) return { bg: 'rgba(96,165,250,0.1)', border: 'rgba(96,165,250,0.2)' };
@@ -283,7 +307,7 @@ export default function LogsTab({ API_URL, authToken, apiFetch }) {
                     background: style.bg, borderLeft: `3px solid ${style.border}`,
                     fontSize: '0.85rem', color: '#e2e8f0', fontFamily: 'system-ui'
                   }}>
-                    {p.raw}
+                    {withDate(p.raw, p.tsMs)}
                   </div>
                 );
               })

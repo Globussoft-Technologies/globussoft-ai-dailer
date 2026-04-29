@@ -73,11 +73,12 @@ func (s *Service) SaveAndAnalyze(ctx context.Context, req SaveRequest) {
 	//    empty-text turns dropped.
 	transcriptJSON, turnCount := historyToTranscript(req.ChatHistory)
 
-	// 3. Skip persistence when nothing was actually said — matches the Python
-	//    guard `if transcript_turns: save_call_transcript(...)`. Checking the
-	//    filtered count (not raw history length) is important so a history of
-	//    only empty-text frames doesn't leave a blank row behind.
-	if turnCount == 0 {
+	// 3. Skip only when there are no turns AND no recording — i.e. truly empty
+	//    sessions (immediate disconnect with no audio). When a recording exists
+	//    we still persist the row so the call shows up in the Transcripts modal
+	//    and the WebM-upload path has a row to attach its URL to. Without this,
+	//    calls with audio but no STT/LLM turns silently disappeared from the UI.
+	if turnCount == 0 && recordingURL == "" {
 		s.log.Info("recording: skipping empty transcript",
 			zap.String("stream_sid", req.StreamSid),
 			zap.Int("raw_turns", len(req.ChatHistory)))

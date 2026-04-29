@@ -76,6 +76,18 @@ func New(
 
 // ServeHTTP handles both /media-stream (Exotel) and /ws/sandbox (browser sim).
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Validate query params BEFORE upgrading the WS so garbage from the
+	// browser sandbox surfaces as a clean HTTP 400 (which the JS WebSocket API
+	// turns into onerror/onclose-before-onopen) instead of opening a session
+	// that then silently fails downstream — e.g. an unknown tts_provider would
+	// previously upgrade the WS, fail tts.New() with a buried log warning, and
+	// the sandbox would record audio with no TTS coming back.
+	q := r.URL.Query()
+	if msg := validateMediaStreamParams(q); msg != "" {
+		http.Error(w, msg, http.StatusBadRequest)
+		return
+	}
+
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		h.log.Warn("ws upgrade failed", zap.Error(err))
@@ -84,7 +96,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer conn.Close()
 
 	// Extract initial identity from query params (may be overridden by "start" event)
-	q := r.URL.Query()
 	streamSid := q.Get("stream_sid")
 	if streamSid == "" {
 		streamSid = fmt.Sprintf("web_sim_%s_%d", q.Get("lead_id"), time.Now().UnixMilli())
@@ -245,6 +256,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Send greeting immediately (Exotel 10s VoiceBot timeout)
 	if sess.TrySetGreeting() && sess.GreetingText != "" && ttsProvider != nil {
 		go synthesizeAndSend(ctx, sess, ttsProvider, sess.GreetingText)
+		// Also broadcast the greeting to monitors / Sandbox panel and store it
+		// in chat history so the AI's opening line shows up alongside the
+		// user's reply (issue #33). Without this, the Live Transcripts panel
+		// only ever showed turns starting from the user's first utterance.
+		sess.BroadcastTranscript("agent", sess.GreetingText)
+		sess.AppendHistory("model", sess.GreetingText)
 	}
 
 	// --- g1: WebSocket message loop ---
@@ -518,18 +535,39 @@ func (h *Handler) initializeCall(ctx context.Context, sess *CallSession) error {
 	}
 	sess.SystemPrompt = callCtx.SystemPrompt
 	sess.GreetingText = callCtx.GreetingText
-	if callCtx.TTSProvider != "" {
+	// Only fill in TTS fields the caller didn't already set via query params.
+	// The Sandbox / web-sim flow passes ?tts_provider=&voice=&tts_language=
+	// to override the org default for one session — without this guard, the
+	// org default clobbers the explicit selection and the user always hears
+	// the same default voice regardless of what they pick. (issue: Sandbox
+	// "voice picker doesn't change the voice")
+	if sess.TTSProvider == "" && callCtx.TTSProvider != "" {
 		sess.TTSProvider = callCtx.TTSProvider
 	}
-	if callCtx.TTSVoiceID != "" {
+	if sess.TTSVoiceID == "" && callCtx.TTSVoiceID != "" {
 		sess.TTSVoiceID = callCtx.TTSVoiceID
 	}
-	if callCtx.TTSLanguage != "" {
+	if sess.TTSLanguage == "" && callCtx.TTSLanguage != "" {
 		sess.TTSLanguage = callCtx.TTSLanguage
 		sess.Language = callCtx.TTSLanguage // drives Deepgram language + LLM prompt language
 	}
 	if callCtx.AgentName != "" {
 		sess.AgentName = callCtx.AgentName
+	}
+	// Swap the persona name in the greeting when the session's voice differs
+	// from whatever the prompt builder used. Two cases:
+	//   1. Org has a default voice (e.g. "aditya") and the Sandbox picked a
+	//      different one (e.g. "mithali"): swap "Aditya" → "Mithali".
+	//   2. Org has NO default voice configured: the prompt builder rendered
+	//      the greeting with the empty-voice fallback ("Arjun"). The Sandbox
+	//      almost always hits this path, so without the swap every voice
+	//      ends up greeted as "Arjun".
+	if sess.TTSVoiceID != "" && sess.TTSVoiceID != callCtx.TTSVoiceID {
+		oldName := prompt.AgentPersonaName(callCtx.TTSVoiceID, sess.Language)
+		newName := prompt.AgentPersonaName(sess.TTSVoiceID, sess.Language)
+		if oldName != "" && newName != "" && oldName != newName {
+			sess.GreetingText = strings.ReplaceAll(sess.GreetingText, oldName, newName)
+		}
 	}
 	return nil
 }

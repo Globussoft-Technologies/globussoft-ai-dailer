@@ -21,10 +21,16 @@ type AuthClaims struct {
 
 // jwtClaims maps the Python-issued JWT payload.
 // Python creates: {"sub": email, "org_id": org_id, "role": role, "exp": ...}
+//
+// Kind is empty for the regular long-lived auth JWT and "sse" for the
+// short-lived ticket minted by /api/sse/ticket — the SSE-specific auth path
+// rejects anything except kind="sse" so a leaked auth JWT can't be
+// downgraded into a query-string ticket. (issue #80)
 type jwtClaims struct {
 	jwt.RegisteredClaims
 	OrgID int64  `json:"org_id"`
 	Role  string `json:"role"`
+	Kind  string `json:"kind,omitempty"`
 }
 
 // requireAuth is middleware that validates the Bearer JWT and injects AuthClaims into context.
@@ -94,19 +100,49 @@ func (s *Server) requireRole(allowed ...string) func(http.HandlerFunc) http.Hand
 	}
 }
 
-// bearerToken extracts the token string from "Authorization: Bearer <token>"
-// or from the "token" query parameter (used by EventSource/SSE which can't set headers).
+// bearerToken extracts the token string from "Authorization: Bearer <token>".
+// Query-string fallback was removed — the long-lived auth JWT must never
+// appear in URLs because reverse proxies, browser history, and Referer
+// headers leak query strings. (issue #80) For SSE / <audio> tag callers
+// that cannot set headers, see requireSSETicket and the blob-fetch pattern
+// on the frontend.
 func bearerToken(r *http.Request) (string, error) {
 	header := r.Header.Get("Authorization")
-	if header != "" {
-		parts := strings.SplitN(header, " ", 2)
-		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
-			return "", fmt.Errorf("expected Bearer token")
+	if header == "" {
+		return "", fmt.Errorf("no Authorization header")
+	}
+	parts := strings.SplitN(header, " ", 2)
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+		return "", fmt.Errorf("expected Bearer token")
+	}
+	return parts[1], nil
+}
+
+// requireSSETicket is a middleware variant for SSE endpoints. It reads a
+// short-lived ticket from the ?ticket= query (because EventSource cannot
+// send custom headers) and accepts ONLY tokens with kind="sse" — the
+// long-lived auth JWT is rejected here even if smuggled in. The ticket is
+// minted via GET /api/sse/ticket which itself requires Bearer auth.
+func (s *Server) requireSSETicket(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		t := r.URL.Query().Get("ticket")
+		if t == "" {
+			writeError(w, http.StatusUnauthorized, "missing ticket")
+			return
 		}
-		return parts[1], nil
+		claims := &jwtClaims{}
+		_, err := jwt.ParseWithClaims(t, claims, func(tok *jwt.Token) (any, error) {
+			if _, ok := tok.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, fmt.Errorf("unexpected signing method: %v", tok.Header["alg"])
+			}
+			return []byte(s.cfg.JWTSecret), nil
+		})
+		if err != nil || claims.Kind != "sse" {
+			writeError(w, http.StatusUnauthorized, "invalid or expired ticket")
+			return
+		}
+		ac := AuthClaims{Email: claims.Subject, OrgID: claims.OrgID, Role: claims.Role}
+		ctx := context.WithValue(r.Context(), ctxKey{}, ac)
+		next.ServeHTTP(w, r.WithContext(ctx))
 	}
-	if t := r.URL.Query().Get("token"); t != "" {
-		return t, nil
-	}
-	return "", fmt.Errorf("no Authorization header")
 }

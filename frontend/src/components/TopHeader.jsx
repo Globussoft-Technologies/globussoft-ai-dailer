@@ -1,5 +1,28 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
+
+// All Admin-side modules listed in the order they used to render. The first
+// PRIMARY_COUNT entries stay inline as tabs; everything after collapses into
+// the "More ▾" overflow menu so the nav doesn't horizontally scroll on
+// 1400-px laptop screens (issue #36).
+const ADMIN_TABS = [
+  { key: 'crm',          path: '/crm',          label: '📊 CRM',                testId: 'tab-crm' },
+  { key: 'campaigns',    path: '/campaigns',    label: '📢 Campaigns',          testId: 'tab-campaigns' },
+  { key: 'ops',          path: '/ops',          label: '📋 Ops & Tasks',        testId: 'tab-ops' },
+  { key: 'analytics',    path: '/analytics',    label: '📈 Analytics',          testId: 'tab-analytics' },
+  { key: 'whatsapp',     path: '/whatsapp',     label: '💬 WhatsApp Comms',     testId: 'tab-whatsapp' },
+  { key: 'integrations', path: '/integrations', label: '🔌 Integrations',       testId: 'tab-integrations' },
+  { key: 'monitor',      path: '/monitor',      label: '🎙️ Monitor AI Calls',  testId: 'tab-monitor' },
+  { key: 'knowledge',    path: '/knowledge',    label: '🧠 RAG Knowledge',      testId: 'tab-rag' },
+  { key: 'sandbox',      path: '/sandbox',      label: '🎯 AI Sandbox',         testId: 'tab-sandbox' },
+  { key: 'scheduled',    path: '/scheduled',    label: '📅 Scheduled',          testId: 'tab-scheduled' },
+  { key: 'billing',      path: '/billing',      label: '💳 Billing',            testId: 'tab-billing' },
+  { key: 'dnd',          path: '/dnd',          label: '🚫 DND',                testId: 'tab-dnd' },
+  { key: 'settings',     path: '/settings',     label: '⚙️ Settings',           testId: 'tab-settings' },
+  { key: 'logs',         path: '/logs',         label: '📋 Live Logs',          testId: 'tab-logs' },
+  { key: 'team',         path: '/team',         label: '👥 Team',               testId: 'tab-team' },
+];
+const PRIMARY_COUNT = 5;
 
 export default function TopHeader({
   userRole,
@@ -11,6 +34,11 @@ export default function TopHeader({
   const activeTab = location.pathname.replace('/', '') || 'crm';
 
   const [callingStatus, setCallingStatus] = useState(null);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [moreCoords, setMoreCoords] = useState({ top: 0, left: 0 });
+  const moreRef = useRef(null);
+  const moreBtnRef = useRef(null);
+  const morePopupRef = useRef(null);
 
   useEffect(() => {
     const fetchStatus = () => {
@@ -26,6 +54,41 @@ export default function TopHeader({
     return () => clearInterval(interval);
   }, []);
 
+  // Close the More dropdown on outside click or Escape so it doesn't block
+  // page interactions (e.g. clicking a campaign card behind it).
+  useEffect(() => {
+    if (!moreOpen) return;
+    const onDocClick = (e) => {
+      const inBtn = moreRef.current && moreRef.current.contains(e.target);
+      const inPopup = morePopupRef.current && morePopupRef.current.contains(e.target);
+      if (!inBtn && !inPopup) setMoreOpen(false);
+    };
+    const onKey = (e) => { if (e.key === 'Escape') setMoreOpen(false); };
+    document.addEventListener('mousedown', onDocClick);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDocClick);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [moreOpen]);
+
+  // Agents only see CRM; no overflow needed.
+  const visibleTabs = userRole === 'Admin' ? ADMIN_TABS : ADMIN_TABS.slice(0, 1);
+  const primary = visibleTabs.slice(0, PRIMARY_COUNT);
+  const overflow = visibleTabs.slice(PRIMARY_COUNT);
+  const overflowHasActive = overflow.some(t => t.key === activeTab);
+
+  const renderTab = (t) => (
+    <button
+      key={t.key}
+      data-testid={t.testId}
+      className={`tab-btn ${activeTab === t.key ? 'active' : ''}`}
+      onClick={() => navigate(t.path)}
+    >
+      {t.label}
+    </button>
+  );
+
   return (
     <header className="header">
       <div className="logo" style={{display: 'flex', alignItems: 'center', gap: '10px'}}>
@@ -33,22 +96,64 @@ export default function TopHeader({
         Globussoft Generative AI Dialer <span className="badge" style={{background: 'rgba(34, 197, 94, 0.2)', color: '#4ade80', ml: 2}}>LIVE</span>
       </div>
 
-      <div className="tab-bar" style={{display: 'flex', gap: '8px', alignItems: 'center', flex: 1, flexWrap: 'nowrap'}}>
-        <button data-testid="tab-crm" className={`tab-btn ${activeTab === 'crm' ? 'active' : ''}`} onClick={() => navigate('/crm')}>📊 CRM</button>
-        {userRole === 'Admin' && <button data-testid="tab-campaigns" className={`tab-btn ${activeTab === 'campaigns' ? 'active' : ''}`} onClick={() => navigate('/campaigns')}>📢 Campaigns</button>}
-        {userRole === 'Admin' && <button data-testid="tab-ops" className={`tab-btn ${activeTab === 'ops' ? 'active' : ''}`} onClick={() => navigate('/ops')}>📋 Ops & Tasks</button>}
-        {userRole === 'Admin' && <button data-testid="tab-analytics" className={`tab-btn ${activeTab === 'analytics' ? 'active' : ''}`} onClick={() => navigate('/analytics')}>📈 Analytics</button>}
-        {userRole === 'Admin' && <button data-testid="tab-whatsapp" className={`tab-btn ${activeTab === 'whatsapp' ? 'active' : ''}`} onClick={() => navigate('/whatsapp')}>💬 WhatsApp Comms</button>}
-        {userRole === 'Admin' && <button data-testid="tab-integrations" className={`tab-btn ${activeTab === 'integrations' ? 'active' : ''}`} onClick={() => navigate('/integrations')}>🔌 Integrations</button>}
-        {userRole === 'Admin' && <button data-testid="tab-monitor" className={`tab-btn ${activeTab === 'monitor' ? 'active' : ''}`} onClick={() => navigate('/monitor')}>🎙️ Monitor AI Calls</button>}
-        {userRole === 'Admin' && <button data-testid="tab-rag" className={`tab-btn ${activeTab === 'knowledge' ? 'active' : ''}`} onClick={() => navigate('/knowledge')}>🧠 RAG Knowledge</button>}
-        {userRole === 'Admin' && <button data-testid="tab-sandbox" className={`tab-btn ${activeTab === 'sandbox' ? 'active' : ''}`} onClick={() => navigate('/sandbox')}>🎯 AI Sandbox</button>}
-        {userRole === 'Admin' && <button data-testid="tab-scheduled" className={`tab-btn ${activeTab === 'scheduled' ? 'active' : ''}`} onClick={() => navigate('/scheduled')}>📅 Scheduled</button>}
-        {userRole === 'Admin' && <button data-testid="tab-billing" className={`tab-btn ${activeTab === 'billing' ? 'active' : ''}`} onClick={() => navigate('/billing')}>💳 Billing</button>}
-        {userRole === 'Admin' && <button data-testid="tab-dnd" className={`tab-btn ${activeTab === 'dnd' ? 'active' : ''}`} onClick={() => navigate('/dnd')}>🚫 DND</button>}
-        {userRole === 'Admin' && <button data-testid="tab-settings" className={`tab-btn ${activeTab === 'settings' ? 'active' : ''}`} onClick={() => navigate('/settings')}>⚙️ Settings</button>}
-        {userRole === 'Admin' && <button data-testid="tab-logs" className={`tab-btn ${activeTab === 'logs' ? 'active' : ''}`} onClick={() => navigate('/logs')}>📋 Live Logs</button>}
-        {userRole === 'Admin' && <button data-testid="tab-team" className={`tab-btn ${activeTab === 'team' ? 'active' : ''}`} onClick={() => navigate('/team')}>👥 Team</button>}
+      <div className="tab-bar" style={{display: 'flex', gap: '8px', alignItems: 'center', flex: 1, flexWrap: 'nowrap', minWidth: 0}}>
+        {primary.map(renderTab)}
+
+        {overflow.length > 0 && (
+          <div ref={moreRef} style={{position: 'relative'}}>
+            <button
+              type="button"
+              ref={moreBtnRef}
+              data-testid="tab-more"
+              className={`tab-btn ${overflowHasActive ? 'active' : ''}`}
+              aria-haspopup="menu"
+              aria-expanded={moreOpen}
+              onClick={() => {
+                // Anchor with position: fixed so the dropdown can never be
+                // clipped by an ancestor's overflow/stacking context.
+                const rect = moreBtnRef.current?.getBoundingClientRect();
+                if (rect) {
+                  setMoreCoords({ top: rect.bottom + 6, left: rect.left });
+                }
+                setMoreOpen(o => !o);
+              }}
+            >
+              More ▾
+            </button>
+          </div>
+        )}
+        {moreOpen && overflow.length > 0 && (
+          <div role="menu" ref={morePopupRef} style={{
+            position: 'fixed', top: moreCoords.top, left: moreCoords.left, zIndex: 9999,
+            minWidth: '220px', maxHeight: '70vh', overflowY: 'auto',
+            background: 'rgba(15,23,42,0.97)', backdropFilter: 'blur(16px)',
+            WebkitBackdropFilter: 'blur(16px)',
+            border: '1px solid rgba(255,255,255,0.08)', borderRadius: '10px',
+            boxShadow: '0 12px 32px rgba(0,0,0,0.45)', padding: '6px',
+          }}>
+            {overflow.map(t => (
+              <button
+                key={t.key}
+                type="button"
+                role="menuitem"
+                data-testid={t.testId}
+                onClick={() => { setMoreOpen(false); navigate(t.path); }}
+                style={{
+                  display: 'block', width: '100%', textAlign: 'left',
+                  padding: '8px 12px', borderRadius: '6px',
+                  background: activeTab === t.key ? 'rgba(99,102,241,0.18)' : 'transparent',
+                  border: 'none',
+                  color: activeTab === t.key ? '#c7d2fe' : '#cbd5e1',
+                  fontSize: '0.85rem', fontWeight: 600, cursor: 'pointer',
+                }}
+                onMouseEnter={e => { if (activeTab !== t.key) e.currentTarget.style.background = 'rgba(255,255,255,0.05)'; }}
+                onMouseLeave={e => { if (activeTab !== t.key) e.currentTarget.style.background = 'transparent'; }}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+        )}
 
         <div className="header-user-info" style={{marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0}}>
           {callingStatus && (

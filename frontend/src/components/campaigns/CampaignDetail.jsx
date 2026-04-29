@@ -1,6 +1,19 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { formatDateTime } from '../../utils/dateFormat';
 import { VOICE_RECOMMENDATIONS } from '../../constants/voices';
+import AuthAudio from '../AuthAudio';
+
+function withDate(label, tsMs) {
+  const d = new Date(tsMs);
+  const dd = String(d.getDate()).padStart(2, '0');
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const yyyy = d.getFullYear();
+  const dateStr = `${dd}/${mm}/${yyyy}`;
+  if (/\[\d{2}:\d{2}:\d{2}\]/.test(label)) {
+    return label.replace(/\[(\d{2}:\d{2}:\d{2})\]/, `[${dateStr} $1]`);
+  }
+  return `[${dateStr}] ${label}`;
+}
 
 // ── WhatsApp Blast Panel ──────────────────────────────────────────────────────
 function WhatsAppBlastPanel({ campaignId, apiFetch, API_URL }) {
@@ -331,7 +344,7 @@ export default function CampaignDetail({
           </div>
           {liveEvents.map((ev, i) => (
             <div key={i} style={{fontSize: '0.8rem', color: '#e2e8f0', padding: '3px 0', borderBottom: '1px solid rgba(255,255,255,0.03)', fontFamily: 'SFMono-Regular, Consolas, monospace'}}>
-              {ev}
+              {withDate(ev.label, ev.ts)}
             </div>
           ))}
         </div>
@@ -524,28 +537,14 @@ export default function CampaignDetail({
                       {call.call_duration_s > 0 ? `${Math.floor(call.call_duration_s / 60)}:${String(Math.floor(call.call_duration_s % 60)).padStart(2, '0')}` : '-'}
                     </td>
                     <td>
-                      {call.recording_url ? (() => {
-                        // /api/recordings/* is auth-gated on the Go backend; <audio>
-                        // cannot send Authorization headers, so append the JWT as a
-                        // ?token= query param. External URLs are left untouched.
-                        let src = call.recording_url;
-                        if (src.startsWith('/api/recordings/')) {
-                          const token = localStorage.getItem('authToken');
-                          if (token) {
-                            const sep = src.includes('?') ? '&' : '?';
-                            src = `${src}${sep}token=${encodeURIComponent(token)}`;
-                          }
-                        }
-                        return (
-                          <audio
-                            controls
-                            preload="none"
-                            src={src}
-                            className="call-log-audio"
-                            style={{height: '36px', width: '260px'}}
-                          />
-                        );
-                      })() : (
+                      {call.recording_url ? (
+                        <AuthAudio
+                          preload="none"
+                          src={call.recording_url}
+                          className="call-log-audio"
+                          style={{height: '36px', width: '260px'}}
+                        />
+                      ) : (
                         <span style={{color: '#64748b', fontSize: '0.8rem'}}>—</span>
                       )}
                     </td>

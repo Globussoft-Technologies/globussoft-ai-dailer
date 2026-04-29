@@ -1,9 +1,46 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { formatDateTime } from '../../utils/dateFormat';
+
+const FALLBACK_FIELDS = [
+  { key: 'api_key', label: 'API Key / Token', type: 'password' },
+  { key: 'base_url', label: 'REST API Base URL', type: 'text' },
+];
+
+// connectionStatus maps the backend's (is_active, last_synced_at) into a single
+// badge so we never show "Active Sync" for a connection that has never synced
+// (issue #73). Auth errors land here too once the backend exposes a
+// last_error column — for now is_active=false serves as the proxy.
+function connectionStatus(intg) {
+  if (!intg.is_active) {
+    return { label: 'Disabled', bg: 'rgba(148,163,184,0.15)', color: '#94a3b8' };
+  }
+  if (!intg.last_synced_at) {
+    return { label: 'Pending first sync', bg: 'rgba(234,179,8,0.12)', color: '#fbbf24' };
+  }
+  return { label: 'Active Sync', bg: 'rgba(34,197,94,0.1)', color: '#4ade80' };
+}
 
 export default function IntegrationsTab({
   handleCreateIntegration, intFormData, setIntFormData, CRM_SCHEMAS, loading, integrations, orgTimezone
 }) {
+  const [submitAttempted, setSubmitAttempted] = useState(false);
+
+  const fields = CRM_SCHEMAS[intFormData.provider] || FALLBACK_FIELDS;
+  const missingKeys = fields
+    .map(f => f.key)
+    .filter(k => !(intFormData.credentials[k] || '').trim());
+  const isFormValid = missingKeys.length === 0;
+
+  const onSubmit = (e) => {
+    setSubmitAttempted(true);
+    if (!isFormValid) {
+      e.preventDefault();
+      return;
+    }
+    setSubmitAttempted(false);
+    handleCreateIntegration(e);
+  };
+
   return (
     <div className="integrations-container" style={{padding: '1rem'}}>
       <div className="wa-header" style={{borderBottom: '1px solid rgba(255,255,255,0.05)', marginBottom: '2rem'}}>
@@ -14,7 +51,7 @@ export default function IntegrationsTab({
       <div style={{display: 'grid', gridTemplateColumns: 'minmax(300px, 400px) 1fr', gap: '2rem'}}>
         <div className="glass-panel" style={{height: 'fit-content'}}>
           <h4 style={{marginTop: 0, marginBottom: '1.5rem', fontSize: '1.1rem', fontWeight: 600}}>Add New Connection</h4>
-          <form onSubmit={handleCreateIntegration} style={{display: 'flex', flexDirection: 'column', gap: '1rem'}}>
+          <form onSubmit={onSubmit} noValidate style={{display: 'flex', flexDirection: 'column', gap: '1rem'}}>
             <div className="form-group" style={{marginBottom: 0}}>
               <label>Provider</label>
               <select className="form-input" value={intFormData.provider} onChange={e => setIntFormData({provider: e.target.value, credentials: {}})}>
@@ -123,19 +160,37 @@ export default function IntegrationsTab({
                 <option value="Podio">Podio</option>
               </select>
             </div>
-            {(CRM_SCHEMAS[intFormData.provider] || [{ key: 'api_key', label: 'API Key / Token', type: 'password' }, { key: 'base_url', label: 'REST API Base URL', type: 'text' }]).map(field => (
-              <div className="form-group" key={field.key} style={{marginBottom: 0}}>
-                <label>{field.label}</label>
-                <input 
-                  type={field.type} 
-                  className="form-input" 
-                  value={intFormData.credentials[field.key] || ''} 
-                  onChange={e => setIntFormData({...intFormData, credentials: {...intFormData.credentials, [field.key]: e.target.value}})} 
-                  placeholder={field.label + "..."} 
-                />
-              </div>
-            ))}
-            <button type="submit" className="btn-primary" disabled={loading} style={{marginTop: '0.5rem'}}>
+            {fields.map(field => {
+              const value = intFormData.credentials[field.key] || '';
+              const showError = submitAttempted && !value.trim();
+              return (
+                <div className="form-group" key={field.key} style={{marginBottom: 0}}>
+                  <label>{field.label} <span style={{color: '#f87171'}}>*</span></label>
+                  <input
+                    type={field.type}
+                    className="form-input"
+                    value={value}
+                    required
+                    aria-invalid={showError}
+                    onChange={e => setIntFormData({...intFormData, credentials: {...intFormData.credentials, [field.key]: e.target.value}})}
+                    placeholder={field.label + "..."}
+                    style={showError ? {borderColor: '#ef4444'} : undefined}
+                  />
+                  {showError && (
+                    <div style={{marginTop: '4px', color: '#fca5a5', fontSize: '0.8rem'}}>
+                      {field.label} is required
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+            <button
+              type="submit"
+              className="btn-primary"
+              disabled={loading || !isFormValid}
+              style={{marginTop: '0.5rem', opacity: (loading || !isFormValid) ? 0.6 : 1, cursor: (loading || !isFormValid) ? 'not-allowed' : 'pointer'}}
+              title={!isFormValid ? `Fill in: ${missingKeys.join(', ')}` : undefined}
+            >
               {loading ? 'Connecting...' : '🔌 Save Connection'}
             </button>
           </form>
@@ -164,7 +219,10 @@ export default function IntegrationsTab({
                      ))}
                   </td>
                   <td>
-                    <span className="badge" style={{background: 'rgba(34, 197, 94, 0.1)', color: '#4ade80'}}>Active Sync</span>
+                    {(() => {
+                      const s = connectionStatus(intg);
+                      return <span className="badge" style={{background: s.bg, color: s.color}}>{s.label}</span>;
+                    })()}
                   </td>
                   <td style={{color: '#94a3b8', fontSize: '0.9rem'}}>{intg.last_synced_at ? formatDateTime(intg.last_synced_at, orgTimezone) : 'Never'}</td>
                 </tr>

@@ -233,6 +233,26 @@ func (d *DB) GetProductByID(id int64) (*Product, error) {
 	return p, err
 }
 
+// GetProductByOrgAndName fetches a product by org+name (case-insensitive,
+// trimmed). Returns nil when not found. Used by createProduct to prevent
+// duplicate (org_id, name) rows that today render as "EmpMonitor / EmpMonitor"
+// in the campaign product dropdown.
+func (d *DB) GetProductByOrgAndName(orgID int64, name string) (*Product, error) {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return nil, nil
+	}
+	row := d.pool.QueryRow(
+		`SELECT `+productCols+` FROM products
+		 WHERE org_id=? AND LOWER(name)=LOWER(?)
+		 ORDER BY id ASC LIMIT 1`, orgID, trimmed)
+	p, err := scanProduct(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	return p, err
+}
+
 // CreateProduct inserts a new product. Returns the new ID.
 func (d *DB) CreateProduct(orgID int64, name, websiteURL, manualNotes string) (int64, error) {
 	res, err := d.pool.Exec(

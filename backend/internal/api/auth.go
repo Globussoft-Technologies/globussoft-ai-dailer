@@ -181,6 +181,7 @@ func userResponse(s *Server, user *db.User) map[string]any {
 // ── JWT helpers ───────────────────────────────────────────────────────────────
 
 const tokenTTL = 30 * 24 * time.Hour // 30 days — matches Python ACCESS_TOKEN_EXPIRE_MINUTES
+const sseTicketTTL = 60 * time.Second // short window — minted just before EventSource connect
 
 func (s *Server) mintToken(email string, orgID int64, role string) (string, error) {
 	claims := &jwtClaims{
@@ -192,6 +193,35 @@ func (s *Server) mintToken(email string, orgID int64, role string) (string, erro
 		Role:  role,
 	}
 	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(s.cfg.JWTSecret))
+}
+
+// mintSSETicket signs a 60-second-TTL JWT carrying kind="sse". Used to
+// authenticate EventSource connections without putting the long-lived auth
+// JWT in the URL. (issue #80)
+func (s *Server) mintSSETicket(email string, orgID int64, role string) (string, error) {
+	claims := &jwtClaims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   email,
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(sseTicketTTL)),
+		},
+		OrgID: orgID,
+		Role:  role,
+		Kind:  "sse",
+	}
+	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(s.cfg.JWTSecret))
+}
+
+// GET /api/sse/ticket — issues a short-lived ticket the frontend appends as
+// ?ticket=… to /api/campaign-events and /api/sse/live-logs. Requires the
+// regular Bearer auth header.
+func (s *Server) sseTicket(w http.ResponseWriter, r *http.Request) {
+	ac := getAuth(r)
+	tok, err := s.mintSSETicket(ac.Email, ac.OrgID, ac.Role)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not mint ticket")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ticket": tok, "expires_in": int(sseTicketTTL.Seconds())})
 }
 
 // ── POST /api/auth/forgot-password ────────────────────────────────────────────

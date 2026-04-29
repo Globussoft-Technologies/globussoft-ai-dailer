@@ -183,10 +183,17 @@ func (s *CallSession) BroadcastAudio(role, payloadB64, format string) {
 	}
 }
 
-// BroadcastTranscript sends a real-time transcript event to all connected monitor clients.
-// role is "user" or "agent". Matches Python:
+// BroadcastTranscript sends a real-time transcript event to all connected
+// monitor clients. role is "user" or "agent". Matches Python:
 //
 //	await monitor.send_json({"type":"transcript","role":"user","text":"..."})
+//
+// For web-sim sessions (the AI Training Sandbox / browser-driven calls) we
+// also write the same payload back to the caller WS so the sandbox's "Live
+// Transcripts" panel updates as the user speaks and the agent replies.
+// (issue #33) Real Exotel/Twilio carrier WS sockets are skipped — they only
+// expect their own protocol frames; sending stray JSON to them risks the
+// carrier closing the session.
 func (s *CallSession) BroadcastTranscript(role, text string) {
 	msg, err := json.Marshal(map[string]string{
 		"type": "transcript",
@@ -197,9 +204,12 @@ func (s *CallSession) BroadcastTranscript(role, text string) {
 		return
 	}
 	s.monitorMu.RLock()
-	defer s.monitorMu.RUnlock()
 	for conn := range s.monitorConns {
 		conn.WriteMessage(websocket.TextMessage, msg) //nolint:errcheck
+	}
+	s.monitorMu.RUnlock()
+	if s.IsWebSim && s.WS != nil {
+		s.WS.WriteMessage(websocket.TextMessage, msg) //nolint:errcheck
 	}
 }
 

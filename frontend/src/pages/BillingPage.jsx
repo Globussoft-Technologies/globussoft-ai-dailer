@@ -273,16 +273,19 @@ export default function BillingPage({ apiFetch, API_URL }) {
                     }}>{inv.status}</span>
                   </td>
                   <td style={{padding: '8px 4px', textAlign: 'right'}}>
-                    <button onClick={() => {
-                      // App stores JWT under 'authToken' (see AuthContext.jsx),
-                      // not 'token' — the old key silently read `null` and
-                      // passed it as a query string, making the download URL
-                      // 401 before the PDF renderer ever ran.
-                      const token = localStorage.getItem('authToken');
-                      // Backend path is /invoices/{invoice_number}/download —
-                      // an integer ID won't match the route variable or the
-                      // DB lookup (GetInvoiceByNumber).
-                      window.open(`${API_URL}/billing/invoices/${encodeURIComponent(inv.invoice_number || inv.id)}/download?token=${encodeURIComponent(token || '')}`, '_blank');
+                    <button onClick={async () => {
+                      // Fetch the PDF as a blob via the Authorization header
+                      // and open the resulting object URL — keeps the JWT out
+                      // of the URL (issue #80). Backend path uses the invoice
+                      // number, not the integer id.
+                      try {
+                        const res = await apiFetch(`${API_URL}/billing/invoices/${encodeURIComponent(inv.invoice_number || inv.id)}/download`);
+                        if (!res.ok) { alert(`Invoice download failed (HTTP ${res.status})`); return; }
+                        const blob = await res.blob();
+                        const objURL = URL.createObjectURL(blob);
+                        window.open(objURL, '_blank', 'noopener,noreferrer');
+                        setTimeout(() => URL.revokeObjectURL(objURL), 60_000);
+                      } catch (e) { alert('Invoice download failed: ' + (e?.message || 'network error')); }
                     }} style={{
                       padding: '4px 10px', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer',
                       background: 'rgba(99,102,241,0.15)', border: '1px solid rgba(99,102,241,0.3)', color: '#a5b4fc',

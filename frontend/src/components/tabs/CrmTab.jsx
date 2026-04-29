@@ -6,14 +6,19 @@ export default function CrmTab({
   activeLanguage, setActiveLanguage,
   INDIAN_VOICES, INDIAN_LANGUAGES,
   selectedOrg, apiFetch, savedVoiceName, setSavedVoiceName,
-  campaigns, onCampaignClick
+  campaigns, dashSummary, onCampaignClick
 }) {
-  // Aggregate stats across all campaigns
-  const totalLeads = campaigns.reduce((sum, c) => sum + (c.stats?.total || 0), 0);
-  const totalCalled = campaigns.reduce((sum, c) => sum + (c.stats?.called || 0), 0);
-  const totalQualified = campaigns.reduce((sum, c) => sum + (c.stats?.qualified || 0), 0);
-  const totalAppointments = campaigns.reduce((sum, c) => sum + (c.stats?.appointments || 0), 0);
+  // Prefer dashSummary (works for all roles via /api/dashboard/summary).
+  // Fall back to summing per-campaign stats so the page still works on first
+  // paint before the summary fetch resolves, and for old code paths that
+  // don't pass dashSummary.
   const activeCampaigns = campaigns.filter(c => c.status === 'active');
+  const campaignsCount = dashSummary?.campaigns ?? activeCampaigns.length;
+  const totalLeads = dashSummary?.total_leads ?? campaigns.reduce((sum, c) => sum + (c.stats?.total || 0), 0);
+  const totalCalled = dashSummary?.called ?? campaigns.reduce((sum, c) => sum + (c.stats?.called || 0), 0);
+  const totalQualified = dashSummary?.qualified ?? campaigns.reduce((sum, c) => sum + (c.stats?.qualified || 0), 0);
+  const totalAppointments = dashSummary?.appointments ?? campaigns.reduce((sum, c) => sum + (c.stats?.appointments || 0), 0);
+  const isAdmin = userRole === 'Admin';
 
   return (
     <div className="crm-container">
@@ -23,7 +28,7 @@ export default function CrmTab({
       <div className="metrics-grid" style={{marginBottom: '2rem'}}>
         <div className="glass-panel metric-card">
           <div className="metric-label">Campaigns</div>
-          <div className="metric-value">{activeCampaigns.length}</div>
+          <div className="metric-value">{campaignsCount}</div>
         </div>
         <div className="glass-panel metric-card">
           <div className="metric-label">Total Leads</div>
@@ -43,8 +48,10 @@ export default function CrmTab({
         </div>
       </div>
 
-      {/* Campaign Cards */}
-      {activeCampaigns.length > 0 ? (
+      {/* Campaign Cards — Admin only. Non-Admins can't open a campaign
+          page (RequireRole) so the cards would be dead clicks; the dashboard
+          numbers above stay visible to all roles. */}
+      {isAdmin && activeCampaigns.length > 0 ? (
         <div style={{marginBottom: '2rem'}}>
           <h3 style={{color: '#94a3b8', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '1px', fontWeight: 600, marginBottom: '12px'}}>ACTIVE CAMPAIGNS</h3>
           <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1rem'}}>
@@ -85,11 +92,11 @@ export default function CrmTab({
             ))}
           </div>
         </div>
-      ) : (
+      ) : isAdmin ? (
         <div className="glass-panel" style={{textAlign: 'center', padding: '3rem', color: '#64748b', marginBottom: '2rem'}}>
           No active campaigns. Go to the Campaigns tab to create one!
         </div>
-      )}
+      ) : null}
 
       {/* Voice settings moved to per-campaign settings */}
     </div>

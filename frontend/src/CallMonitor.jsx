@@ -3,24 +3,59 @@ import React, { useState, useRef } from 'react';
 export default function CallMonitor({ apiUrl }) {
   const [streamSid, setStreamSid] = useState('');
   const [connected, setConnected] = useState(false);
+  const [connecting, setConnecting] = useState(false);
+  const [error, setError] = useState('');
   const [transcripts, setTranscripts] = useState([]);
   const [whisperText, setWhisperText] = useState('');
   const [takeoverActive, setTakeoverActive] = useState(false);
   const wsRef = useRef(null);
 
   const connectToCall = () => {
-    if (!streamSid) return;
-    const wsUrl = apiUrl.replace("http", "ws") + `/ws/monitor/${streamSid}`;
-    wsRef.current = new WebSocket(wsUrl);
-    
-    wsRef.current.onopen = () => setConnected(true);
-    wsRef.current.onmessage = (event) => {
+    setError('');
+    const sid = streamSid.trim();
+    if (!sid) {
+      setError('Stream SID is required');
+      return;
+    }
+    setConnecting(true);
+    const wsUrl = apiUrl.replace("http", "ws") + `/ws/monitor/${sid}`;
+    const ws = new WebSocket(wsUrl);
+    wsRef.current = ws;
+
+    // Track open status in the closure so onclose can distinguish
+    // "server rejected the SID" (close before open) from a normal disconnect.
+    let opened = false;
+
+    ws.onopen = () => {
+      opened = true;
+      setConnecting(false);
+      setConnected(true);
+    };
+    ws.onmessage = (event) => {
       const data = JSON.parse(event.data);
+      // Server may upgrade the WS and then immediately send {"error": "..."}
+      // (e.g. session not found). Surface it instead of silently dropping.
+      if (data.error) {
+        setError(data.error);
+        ws.close();
+        return;
+      }
       if (data.type === 'transcript') {
         setTranscripts(prev => [...prev, data]);
       }
     };
-    wsRef.current.onclose = () => setConnected(false);
+    ws.onclose = () => {
+      if (!opened) {
+        setError(`No active stream found for SID "${sid}"`);
+      }
+      setConnecting(false);
+      setConnected(false);
+    };
+    ws.onerror = () => {
+      if (!opened) {
+        setError('Could not connect to monitor stream. Check the SID and try again.');
+      }
+    };
   };
 
   const sendWhisper = () => {
@@ -55,16 +90,34 @@ export default function CallMonitor({ apiUrl }) {
       <p style={{color: '#94a3b8', marginBottom: '2rem'}}>Inject dynamic instructions into the AI's mind instantly, or take over the line if the client demands human interaction.</p>
       
       {!connected ? (
-        <div style={{display: 'flex', gap: '1rem', alignItems: 'center'}}>
-          <input 
-            className="form-input" 
-            placeholder="Enter active Stream SID routing ID..." 
-            value={streamSid} 
-            onChange={(e) => setStreamSid(e.target.value)}
-            style={{flex: 1, marginBottom: 0}}
-          />
-          <button className="btn-primary" onClick={connectToCall}>Connect Monitor</button>
-        </div>
+        <>
+          {error && (
+            <div style={{background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '8px', padding: '10px 14px', marginBottom: '1rem', color: '#fca5a5', fontSize: '0.85rem'}}>
+              {error}
+            </div>
+          )}
+          <form
+            onSubmit={(e) => { e.preventDefault(); connectToCall(); }}
+            style={{display: 'flex', gap: '1rem', alignItems: 'center'}}
+          >
+            <input
+              className="form-input"
+              placeholder="Enter active Stream SID routing ID..."
+              value={streamSid}
+              onChange={(e) => { setStreamSid(e.target.value); if (error) setError(''); }}
+              required
+              disabled={connecting}
+              style={{flex: 1, marginBottom: 0}}
+            />
+            <button
+              type="submit"
+              className="btn-primary"
+              disabled={connecting || !streamSid.trim()}
+            >
+              {connecting ? 'Connecting…' : 'Connect Monitor'}
+            </button>
+          </form>
+        </>
       ) : (
         <div style={{display: 'flex', flexDirection: 'column', gap: '1.5rem'}}>
           <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>

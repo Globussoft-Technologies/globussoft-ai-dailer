@@ -4,12 +4,115 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gorilla/websocket"
 	"go.uber.org/zap"
 )
+
+// maxMonitorKeyLen caps stream_sid / call_sid length. Real Twilio/Exotel SIDs
+// are ~34 chars; our internal web_sim SIDs are ~40. 128 leaves generous margin
+// while rejecting obvious garbage and abuse.
+const maxMonitorKeyLen = 128
+
+// validateMonitorKey enforces the same shape rules the frontend does and a few
+// the frontend can't (length cap, character set). Returns "" when valid, else
+// the user-facing error string.
+func validateMonitorKey(key string) string {
+	if key == "" {
+		return "stream_sid or call_sid required"
+	}
+	if len(key) > maxMonitorKeyLen {
+		return "stream_sid or call_sid too long"
+	}
+	// Real SIDs are alphanumeric plus '_' and '-'. Anything else (slashes, dots,
+	// query chars) is either a path-traversal attempt or a malformed copy/paste.
+	for _, r := range key {
+		ok := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') || r == '_' || r == '-'
+		if !ok {
+			return "stream_sid or call_sid contains invalid characters"
+		}
+	}
+	return ""
+}
+
+// Allowed values for /media-stream query params. Anything outside these sets
+// is either a typo, a stale client, or an attempted abuse — better to reject
+// at the door than to silently swallow it and have the call act weird.
+var (
+	validTTSProviders = map[string]bool{"elevenlabs": true, "sarvam": true, "smallest": true}
+	validTTSLanguages = map[string]bool{
+		"hi": true, "mr": true, "en": true, "ta": true, "te": true,
+		"kn": true, "bn": true, "gu": true, "pa": true, "ml": true,
+		"multi": true, // sandbox uses "multi" for Deepgram multi-language mode
+	}
+)
+
+// Caps for free-form params. Real lead names / interests sit well under these
+// limits; the cap exists to bound memory and reject obviously malformed input.
+const (
+	maxFreeFormParamLen = 256
+	maxStreamSidLen     = 128
+	maxVoiceIDLen       = 128
+)
+
+// validateMediaStreamParams checks the /media-stream and /ws/sandbox query
+// string. Returns "" when valid, else a user-facing error string. Empty values
+// are always allowed — those mean "use the org / campaign default", which is
+// how the Exotel webhook flow works.
+func validateMediaStreamParams(q url.Values) string {
+	if v := q.Get("tts_provider"); v != "" && !validTTSProviders[v] {
+		return "tts_provider must be one of: elevenlabs, sarvam, smallest"
+	}
+	if v := q.Get("tts_language"); v != "" && !validTTSLanguages[v] {
+		return "tts_language is not a supported language code"
+	}
+	if v := q.Get("voice"); v != "" {
+		if len(v) > maxVoiceIDLen {
+			return "voice is too long"
+		}
+		for _, r := range v {
+			ok := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+				(r >= '0' && r <= '9') || r == '_' || r == '-'
+			if !ok {
+				return "voice contains invalid characters"
+			}
+		}
+	}
+	if v := q.Get("stream_sid"); v != "" {
+		if len(v) > maxStreamSidLen {
+			return "stream_sid is too long"
+		}
+		for _, r := range v {
+			ok := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+				(r >= '0' && r <= '9') || r == '_' || r == '-'
+			if !ok {
+				return "stream_sid contains invalid characters"
+			}
+		}
+	}
+	// Numeric IDs must parse cleanly. Previous code used fmt.Sscanf which
+	// silently accepts "123abc" as 123 — a real footgun for off-by-one bugs.
+	for _, key := range []string{"lead_id", "campaign_id", "org_id"} {
+		if v := q.Get(key); v != "" {
+			if _, err := strconv.ParseInt(v, 10, 64); err != nil {
+				return key + " must be a number"
+			}
+		}
+	}
+	// Free-form fields: bound length only, allow the full Unicode range so
+	// names like "Akhil" or interests like "2BHK in Andheri" pass through.
+	for _, key := range []string{"name", "lead_name", "phone", "lead_phone", "interest"} {
+		if v := q.Get(key); len(v) > maxFreeFormParamLen {
+			return key + " is too long"
+		}
+	}
+	return ""
+}
 
 // lookupSession resolves a monitor-WS key to an active CallSession. The key
 // may be either a stream_sid or a call_sid. The call_sid index is populated
@@ -43,9 +146,9 @@ func (h *Handler) lookupSession(key string, maxWait time.Duration) (*CallSession
 // Accepting call_sid lets /api/manual-call return a URL the client can open
 // immediately, before the carrier has dialled through to /media-stream.
 func (h *Handler) ServeMonitor(w http.ResponseWriter, r *http.Request) {
-	key := strings.TrimPrefix(r.URL.Path, "/ws/monitor/")
-	if key == "" {
-		http.Error(w, "stream_sid or call_sid required", http.StatusBadRequest)
+	key := strings.TrimSpace(strings.TrimPrefix(r.URL.Path, "/ws/monitor/"))
+	if msg := validateMonitorKey(key); msg != "" {
+		http.Error(w, msg, http.StatusBadRequest)
 		return
 	}
 

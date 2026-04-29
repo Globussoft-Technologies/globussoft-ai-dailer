@@ -8,12 +8,19 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/globussoft/callified-backend/internal/callguard"
 )
+
+// Pronunciation guide values are concatenated into the LLM system prompt and
+// rendered in admin/CSV surfaces, so they must be a strict allow-list to block
+// stored prompt-injection and XSS (issue #81). Letters, digits, space, hyphen,
+// apostrophe, period only; 1–50 chars; must contain at least one alphanumeric.
+var pronAllowed = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9 .'\-]{0,49}$`)
 
 // ── GET /api/tasks ───────────────────────────────────────────────────────────
 
@@ -82,6 +89,14 @@ func (s *Server) addPronunciation(w http.ResponseWriter, r *http.Request) {
 	}
 	body.Word = strings.TrimSpace(body.Word)
 	body.Phonetic = strings.TrimSpace(body.Phonetic)
+	if !pronAllowed.MatchString(body.Word) {
+		writeError(w, http.StatusBadRequest, "written word: only letters, digits, spaces, hyphens, apostrophes, periods (max 50 chars)")
+		return
+	}
+	if !pronAllowed.MatchString(body.Phonetic) {
+		writeError(w, http.StatusBadRequest, "how to pronounce: only letters, digits, spaces, hyphens, apostrophes, periods (max 50 chars)")
+		return
+	}
 	if strings.EqualFold(body.Word, body.Phonetic) {
 		writeError(w, http.StatusBadRequest, "phonetic must differ from word")
 		return
@@ -244,8 +259,17 @@ func (s *Server) attachRecordingToLatestTranscript(ctx context.Context, leadID i
 		case <-time.After(500 * time.Millisecond):
 		}
 	}
-	s.logger.Sugar().Warnw("uploadRecording: no transcript found to attach URL to",
-		"lead_id", leadID, "url", recURL)
+	// No transcript row exists (e.g. web-sim with no server-side WAV, or
+	// finalizeCall didn't run). Create an empty row carrying the webm URL
+	// so the call still appears in the Transcripts modal as audio-only.
+	transcriptID, err := s.db.SaveCallTranscript(leadID, 0, 0, "[]", recURL, "", 0)
+	if err != nil {
+		s.logger.Sugar().Warnw("uploadRecording: no transcript and create failed",
+			"lead_id", leadID, "url", recURL, "err", err)
+		return
+	}
+	s.logger.Sugar().Infow("uploadRecording: created empty transcript with webm",
+		"transcript_id", transcriptID, "lead_id", leadID, "url", recURL)
 }
 
 // ── GET /ping ─────────────────────────────────────────────────────────────────

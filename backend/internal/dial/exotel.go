@@ -33,27 +33,30 @@ func NewExotelClient(apiKey, apiToken, accountSID, callerID, appID string) *Exot
 }
 
 // InitiateCall dials toPhone via Exotel Connect API and returns the call SID.
+// exomlURL is the URL Exotel fetches to get instructions (ExoML XML); when
+// empty, falls back to the legacy Exotel-hosted app at http://my.exotel.com/exoml/start/{appID}.
+// Pointing exomlURL at our own /webhook/exotel lets us forward per-call
+// query params (lead name, phone, lead_id, …) into the WebSocket URL — without
+// it, every call lands on /media-stream with no name and the WS handler is
+// forced to guess from a racy Redis "latest" entry.
 // callbackURL receives status events (answered, completed, etc.).
-//
-// Payload mirrors the (working) Python dial_exotel — app-based flow:
-//   - From       : customer phone (91XXXXXXXXXX, no leading +)
-//   - CallerId   : Exotel DID
-//   - Url        : ExoML app URL (no account SID in path)
-//   - CallType   : "trans" (transactional, TRAI DLT compliant)
-//   - StatusCallback
 //
 // Do NOT send "To" in app-based flow — Exotel rejects the combination of
 // Url + To with 400 Bad/missing parameters (code 34001).
-func (e *ExotelClient) InitiateCall(ctx context.Context, toPhone, callbackURL string) (string, error) {
+func (e *ExotelClient) InitiateCall(ctx context.Context, toPhone, exomlURL, callbackURL string) (string, error) {
 	endpoint := fmt.Sprintf(
 		"https://api.exotel.com/v1/Accounts/%s/Calls/connect.json",
 		e.accountSID)
+
+	if exomlURL == "" {
+		exomlURL = fmt.Sprintf("http://my.exotel.com/exoml/start/%s", e.appID)
+	}
 
 	phone := ExotelPhone(toPhone)
 	form := url.Values{}
 	form.Set("From", phone)
 	form.Set("CallerId", e.callerID)
-	form.Set("Url", fmt.Sprintf("http://my.exotel.com/exoml/start/%s", e.appID))
+	form.Set("Url", exomlURL)
 	form.Set("CallType", "trans")
 	if callbackURL != "" {
 		form.Set("StatusCallback", callbackURL)

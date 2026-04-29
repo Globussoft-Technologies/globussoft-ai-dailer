@@ -5,6 +5,7 @@ export default function SettingsTab({
   handleAddPronunciation, pronFormData, setPronFormData, pronunciations, handleDeletePronunciation,
   selectedOrg, orgs, showProductInput, setShowProductInput, newProductName, setNewProductName,
   handleAddProduct, orgProducts, handleDeleteProduct, handleSaveProduct, scraping, handleScrapeProduct,
+  addingProduct, productAddError,
   promptDirty, handleSaveSystemPrompt, promptSaving, promptSaveStatus,
   systemPromptAuto, systemPromptCustom,
   setSystemPromptCustom, setPromptDirty,
@@ -134,6 +135,9 @@ export default function SettingsTab({
             <input
               className="form-input"
               required
+              maxLength={50}
+              pattern="[A-Za-z0-9][A-Za-z0-9 .'\-]{0,49}"
+              title="Letters, digits, spaces, hyphens, apostrophes, periods (max 50)"
               value={pronFormData.word}
               onChange={e => setPronFormData({...pronFormData, word: e.target.value})}
               placeholder="e.g. Adsgpt"
@@ -146,6 +150,9 @@ export default function SettingsTab({
             <input
               className="form-input"
               required
+              maxLength={50}
+              pattern="[A-Za-z0-9][A-Za-z0-9 .'\-]{0,49}"
+              title="Letters, digits, spaces, hyphens, apostrophes, periods (max 50)"
               value={pronFormData.phonetic}
               onChange={e => setPronFormData({...pronFormData, phonetic: e.target.value})}
               placeholder="e.g. Ads G P T"
@@ -229,15 +236,22 @@ export default function SettingsTab({
               <div style={{display: 'flex', gap: '8px', alignItems: 'center'}}>
                 <input data-testid="product-name-input" className="form-input" autoFocus placeholder="Product name (e.g. AdsGPT)..."
                   value={newProductName} onChange={e => setNewProductName(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && handleAddProduct()}
+                  onKeyDown={e => e.key === 'Enter' && !addingProduct && handleAddProduct()}
+                  disabled={addingProduct}
                   style={{width: '220px', height: '36px', fontSize: '0.85rem'}} />
-                <button className="btn-primary" style={{background: 'linear-gradient(135deg, #10b981, #059669)', fontSize: '0.85rem', padding: '6px 14px', height: '36px'}}
-                  onClick={handleAddProduct}>Add</button>
+                <button className="btn-primary" style={{background: 'linear-gradient(135deg, #10b981, #059669)', fontSize: '0.85rem', padding: '6px 14px', height: '36px', opacity: addingProduct ? 0.6 : 1, cursor: addingProduct ? 'not-allowed' : 'pointer'}}
+                  disabled={addingProduct}
+                  onClick={handleAddProduct}>{addingProduct ? 'Adding…' : 'Add'}</button>
                 <button style={{background: 'transparent', border: '1px solid rgba(255,255,255,0.1)', color: '#94a3b8', fontSize: '0.85rem', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', height: '36px'}}
                   onClick={() => { setShowProductInput(false); setNewProductName(''); }}>✕</button>
               </div>
             )}
           </div>
+          {productAddError && (
+            <div style={{marginBottom: '1rem', padding: '8px 12px', borderRadius: '6px', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', color: '#fca5a5', fontSize: '0.85rem'}}>
+              {productAddError}
+            </div>
+          )}
 
           {orgProducts.length === 0 ? (
             <div style={{padding: '1.5rem', textAlign: 'center', color: '#64748b', background: 'rgba(0,0,0,0.2)', borderRadius: '8px'}}>No products yet. Add one to configure AI knowledge.</div>

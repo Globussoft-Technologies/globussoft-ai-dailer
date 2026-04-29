@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
+import { useAuth } from '../contexts/AuthContext';
 
 export default function TeamPage({ apiFetch, API_URL }) {
+  const { currentUser } = useAuth();
   const [members, setMembers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showInvite, setShowInvite] = useState(false);
@@ -66,8 +68,9 @@ export default function TeamPage({ apiFetch, API_URL }) {
         setConfirmDelete(null);
         fetchTeam();
       } else {
-        const data = await res.json();
-        alert(data.detail || 'Failed to remove user');
+        let msg = `Failed to remove user (HTTP ${res.status})`;
+        try { const data = await res.json(); if (data?.error || data?.detail) msg = data.error || data.detail; } catch (_) {}
+        alert(msg);
       }
     } catch (e) { alert('Network error'); }
   };
@@ -180,18 +183,28 @@ export default function TeamPage({ apiFetch, API_URL }) {
               </tr>
             </thead>
             <tbody>
-              {members.map(m => (
+              {members.map(m => {
+                const isSelf = currentUser && currentUser.id === m.id;
+                return (
                 <tr key={m.id} style={{ borderBottom: '1px solid rgba(148,163,184,0.08)' }}>
-                  <td style={tdStyle}>{m.full_name || '-'}</td>
+                  <td style={tdStyle}>
+                    {m.full_name || '-'}
+                    {isSelf && (
+                      <span style={{ marginLeft: '8px', fontSize: '0.7rem', color: '#a78bfa', fontWeight: 600 }}>(you)</span>
+                    )}
+                  </td>
                   <td style={tdStyle}>{m.email}</td>
                   <td style={tdStyle}>
                     <select
                       value={m.role}
+                      disabled={isSelf}
+                      title={isSelf ? "You cannot change your own role" : undefined}
                       onChange={e => handleRoleChange(m.id, e.target.value)}
                       style={{
                         background: 'rgba(30,41,59,0.9)', border: '1px solid rgba(148,163,184,0.2)',
-                        borderRadius: '6px', color: '#e2e8f0', padding: '4px 8px', fontSize: '0.8rem',
-                        cursor: 'pointer',
+                        borderRadius: '6px', color: isSelf ? '#64748b' : '#e2e8f0', padding: '4px 8px', fontSize: '0.8rem',
+                        cursor: isSelf ? 'not-allowed' : 'pointer',
+                        opacity: isSelf ? 0.6 : 1,
                       }}
                     >
                       <option value="Admin">Admin</option>
@@ -203,7 +216,13 @@ export default function TeamPage({ apiFetch, API_URL }) {
                     {m.created_at ? new Date(m.created_at).toLocaleDateString() : '-'}
                   </td>
                   <td style={{ ...tdStyle, textAlign: 'right' }}>
-                    {confirmDelete === m.id ? (
+                    {currentUser && currentUser.id === m.id ? (
+                      // No Remove button on the caller's own row — self-removal
+                      // would lock them out (and could lock the org out if
+                      // they're the only admin). Backend rejects it anyway.
+                      // Issue #54.
+                      <span style={{ color: '#64748b', fontSize: '0.75rem' }}>—</span>
+                    ) : confirmDelete === m.id ? (
                       <span style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end', alignItems: 'center' }}>
                         <span style={{ fontSize: '0.75rem', color: '#fca5a5' }}>Remove?</span>
                         <button onClick={() => handleDelete(m.id)}
@@ -229,7 +248,8 @@ export default function TeamPage({ apiFetch, API_URL }) {
                     )}
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         )}

@@ -1,5 +1,6 @@
 import React, { useEffect } from 'react';
 import { formatDateTime } from '../../utils/dateFormat';
+import AuthAudio from '../AuthAudio';
 
 // Language code → display name. Covers the 10 languages the dialer supports.
 // We show this as a small badge on each call header so you can tell at a
@@ -78,24 +79,12 @@ export default function TranscriptModal({ transcriptLead, setTranscriptLead, tra
                   const color = isWav ? '#22d3ee' : isMp3 ? '#22c55e' : isWebm ? '#a855f7' : '#818cf8';
                   const bg = isWav ? 'rgba(34,211,238,0.05)' : isMp3 ? 'rgba(34,197,94,0.05)' : isWebm ? 'rgba(168,85,247,0.05)' : 'rgba(99,102,241,0.05)';
                   const border = isWav ? 'rgba(34,211,238,0.2)' : isMp3 ? 'rgba(34,197,94,0.2)' : isWebm ? 'rgba(168,85,247,0.2)' : 'rgba(99,102,241,0.15)';
-                  // /api/recordings/* is auth-gated on the Go backend; the <audio>
-                  // tag can't set an Authorization header, so append the JWT as
-                  // a ?token= query param (backend accepts it for audio/SSE).
-                  // External URLs (e.g. Exotel-hosted) are left untouched.
-                  let audioSrc = url;
-                  if (url.startsWith('/api/recordings/')) {
-                    const token = localStorage.getItem('authToken');
-                    if (token) {
-                      const sep = url.includes('?') ? '&' : '?';
-                      audioSrc = `${url}${sep}token=${encodeURIComponent(token)}`;
-                    }
-                  }
+                  // AuthAudio fetches /api/recordings/* as a blob via
+                  // Authorization header to keep the JWT out of the URL.
                   return (
                     <div style={{marginBottom: '1rem', padding: '10px', background: bg, borderRadius: '8px', border: `1px solid ${border}`}}>
                       <div style={{fontSize: '0.8rem', color, marginBottom: '6px', fontWeight: 600}}>{sourceLabel}</div>
-                      <audio controls style={{width: '100%', height: '36px'}} src={audioSrc}>
-                        Your browser does not support the audio element.
-                      </audio>
+                      <AuthAudio style={{width: '100%', height: '36px'}} src={url} />
                     </div>
                   );
                 })()}

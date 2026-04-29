@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useAuth } from './contexts/AuthContext';
 
 export default function KnowledgeBase({ apiUrl }) {
+  const { apiFetch } = useAuth();
   const [files, setFiles] = useState([]);
   const [uploading, setUploading] = useState(false);
   const [statusMsg, setStatusMsg] = useState('');
@@ -101,18 +103,27 @@ export default function KnowledgeBase({ apiUrl }) {
             ) : (
               <ul style={{listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: '10px'}}>
                 {files.map((f, i) => {
-                  // /api/knowledge/{id}/download is auth-gated. <a target=_blank>
-                  // can't send Authorization headers, so append the JWT as a
-                  // ?token= query param — the backend's bearerToken() helper
-                  // already accepts this fallback path.
-                  const token = localStorage.getItem('authToken');
-                  const downloadURL = `${apiUrl}/knowledge/${f.id}/download?token=${encodeURIComponent(token || '')}`;
+                  // /api/knowledge/{id}/download is auth-gated. We can't put
+                  // the JWT in the URL (issue #80), so fetch as blob via the
+                  // Authorization header and open the resulting object URL.
+                  const handleOpen = async (e) => {
+                    e.preventDefault();
+                    try {
+                      const res = await apiFetch(`${apiUrl}/knowledge/${f.id}/download`);
+                      if (!res.ok) { alert(`Download failed (HTTP ${res.status})`); return; }
+                      const blob = await res.blob();
+                      const objURL = URL.createObjectURL(blob);
+                      window.open(objURL, '_blank', 'noopener,noreferrer');
+                      // Revoke after a beat so the new tab can finish loading.
+                      setTimeout(() => URL.revokeObjectURL(objURL), 60_000);
+                    } catch (err) { alert('Download failed: ' + (err?.message || 'network error')); }
+                  };
                   return (
                   <li key={i} style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'rgba(255,255,255,0.03)', padding: '12px', borderRadius: '6px', borderLeft: f.status === 'Active' ? '3px solid #4ade80' : '3px solid #f59e0b'}}>
                     <div style={{display: 'flex', alignItems: 'center', gap: '10px'}}>
                       <span style={{fontSize: '1.2rem'}}>📄</span>
                       <div>
-                        <a href={downloadURL} target="_blank" rel="noopener noreferrer"
+                        <a href="#" onClick={handleOpen}
                           style={{color: '#93c5fd', fontWeight: 500, textDecoration: 'none', cursor: 'pointer'}}
                           onMouseEnter={e => e.currentTarget.style.textDecoration = 'underline'}
                           onMouseLeave={e => e.currentTarget.style.textDecoration = 'none'}

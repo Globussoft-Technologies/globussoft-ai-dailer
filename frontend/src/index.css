@@ -82,9 +82,13 @@ body {
   align-items: center;
   gap: 8px;
 }
-.btn-primary:hover {
+.btn-primary:hover:not(:disabled) {
   transform: translateY(-2px);
   box-shadow: 0 6px 20px rgba(99, 102, 241, 0.5);
+}
+.btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 .btn-call {
   background: rgba(16, 185, 129, 0.15);
@@ -132,9 +136,19 @@ body {
 .metric-value {
   font-size: 3rem;
   font-weight: 800;
+  line-height: 1;
   margin: 10px 0 0;
   color: #fff;
-  text-shadow: 0 2px 10px rgba(0,0,0,0.5);
+  /* tabular-nums keeps every digit the same advance width so cards with a
+     single "0" render with the same proportions as cards showing "312" —
+     and lining-nums prevents oldstyle glyph fallbacks where "0" descends
+     below the baseline (which is what made the digit look like a squashed
+     oval on the Ops page, issue #44). */
+  font-variant-numeric: tabular-nums lining-nums;
+  /* Softer shadow: the 10px-blur version smeared single digits vertically
+     until they read as ovals on smaller cards. 6px keeps the depth cue
+     without the smear. */
+  text-shadow: 0 2px 6px rgba(0,0,0,0.45);
 }
 .metric-label {
   color: #94a3b8;
@@ -288,27 +302,13 @@ body {
   background: rgba(255, 255, 255, 0.05);
 }
 
-/* Tab bar: always scrollable, never wraps */
+/* Tab bar: visible overflow so the "More" dropdown renders. The previous
+   overflow-x:auto was the source of the horizontal scrollbar (issue #36) and
+   also clipped the absolutely-positioned dropdown. The "More" menu now
+   handles the case where there are more tabs than fit. */
 .tab-bar {
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(99, 102, 241, 0.5) rgba(255, 255, 255, 0.05);
+  overflow: visible;
   padding-bottom: 4px;
-}
-.tab-bar::-webkit-scrollbar {
-  height: 4px;
-}
-.tab-bar::-webkit-scrollbar-track {
-  background: rgba(255, 255, 255, 0.05);
-  border-radius: 4px;
-}
-.tab-bar::-webkit-scrollbar-thumb {
-  background: rgba(99, 102, 241, 0.5);
-  border-radius: 4px;
-}
-.tab-bar::-webkit-scrollbar-thumb:hover {
-  background: rgba(99, 102, 241, 0.8);
 }
 .btn-punch {
   width: 100%;

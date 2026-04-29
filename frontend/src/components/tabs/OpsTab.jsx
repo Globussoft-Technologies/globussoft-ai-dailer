@@ -7,15 +7,15 @@ export default function OpsTab({
     <div className="ops-container" style={{padding: '1rem'}}>
       {reports && (
         <div className="metrics-grid" style={{marginBottom: '3rem'}}>
-          <div className="glass-panel metric-card" style={{padding: '1.2rem'}}>
+          <div className="glass-panel metric-card">
             <div className="metric-label">Closed Deals</div>
             <div className="metric-value" style={{color: '#34d399'}}>{reports.closed_deals}</div>
           </div>
-          <div className="glass-panel metric-card" style={{padding: '1.2rem'}}>
+          <div className="glass-panel metric-card">
             <div className="metric-label">Verified Punches</div>
             <div className="metric-value">{reports.valid_site_punches}</div>
           </div>
-          <div className="glass-panel metric-card" style={{padding: '1.2rem'}}>
+          <div className="glass-panel metric-card">
             <div className="metric-label">Pending Tasks</div>
             <div className="metric-value" style={{color: '#fbbf24'}}>{reports.pending_internal_tasks}</div>
           </div>

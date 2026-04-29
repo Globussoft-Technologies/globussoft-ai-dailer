@@ -39,6 +39,16 @@ export function AuthProvider({ children }) {
     return res;
   }, [authToken, clearSession]);
 
+  // Mints a 60-second SSE ticket via Authorization header, returning the
+  // ticket string. Callers append it as ?ticket=… to EventSource URLs so the
+  // long-lived auth JWT never appears in URLs (issue #80).
+  const fetchSseTicket = useCallback(async () => {
+    const res = await apiFetch(`${API_URL}/sse/ticket`);
+    if (!res.ok) throw new Error(`sse ticket: ${res.status}`);
+    const data = await res.json();
+    return data.ticket;
+  }, [apiFetch]);
+
   // Background revalidation: if we have a token, verify it's still valid.
   // Runs without blocking the UI — dashboard is already on-screen.
   useEffect(() => {
@@ -82,8 +92,28 @@ export function AuthProvider({ children }) {
 
   const logout = clearSession;
 
+  // loginWithToken finishes an SSO handshake. The backend already minted our
+  // own JWT and bounced the browser to /sso/return?token=…; this helper
+  // commits the token and pulls the canonical user profile from /auth/me so
+  // the SPA boots into the same shape as a regular password login.
+  const loginWithToken = async (token) => {
+    setAuthToken(token);
+    localStorage.setItem('authToken', token);
+    const res = await fetch(`${API_URL}/auth/me`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      clearSession();
+      throw new Error('SSO token rejected by /auth/me');
+    }
+    const user = await res.json();
+    setCurrentUser(user);
+    localStorage.setItem('currentUser', JSON.stringify(user));
+    return user;
+  };
+
   return (
-    <AuthContext.Provider value={{ authToken, currentUser, setCurrentUser, apiFetch, login, signup, logout }}>
+    <AuthContext.Provider value={{ authToken, currentUser, setCurrentUser, apiFetch, fetchSseTicket, login, signup, logout, loginWithToken }}>
       {children}
     </AuthContext.Provider>
   );

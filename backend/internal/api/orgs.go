@@ -249,6 +249,18 @@ func (s *Server) createProduct(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name required")
 		return
 	}
+	// Reject duplicates within the same org. A product with the same name
+	// (case-insensitive, trimmed) shows up as two indistinguishable rows in
+	// the campaign dropdown — return the existing row's id so the frontend
+	// can select it instead of creating a confusing duplicate.
+	if existing, lookupErr := s.db.GetProductByOrgAndName(orgID, req.Name); lookupErr == nil && existing != nil {
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error":            "product already exists",
+			"existing_id":      existing.ID,
+			"existing_name":    existing.Name,
+		})
+		return
+	}
 	id, err := s.db.CreateProduct(orgID, req.Name, req.WebsiteURL, req.ManualNotes)
 	if err != nil {
 		s.logger.Sugar().Errorw("createProduct", "err", err)

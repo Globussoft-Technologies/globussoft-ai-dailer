@@ -79,6 +79,27 @@ type Config struct {
 
 	// WhatsApp (Phase 3C)
 	MetaVerifyToken string `env:"META_WHATSAPP_VERIFY_TOKEN"`
+
+	// SSO (JWT-based, single trusted issuer).
+	//
+	// External system signs a JWT and redirects the user to
+	// /api/auth/sso/jwt?token=<jwt>. We verify the signature, mint our own
+	// internal JWT, and bounce the user to the frontend with it.
+	//
+	// Verification key precedence:
+	//   1) SSOPublicKeyPEM set → verify with RS256 (recommended for prod)
+	//   2) SSOSharedSecret set → verify with HS256 (simpler for dev/internal)
+	//   3) neither → /api/auth/sso/jwt returns 503 (SSO disabled)
+	//
+	// Issuer / Audience are validated when set — leave empty to skip those
+	// checks. Frontend URL is where we redirect the browser after minting our
+	// own token; appended with /sso/return?token=…&next=… so the SPA can
+	// finish the handshake.
+	SSOSharedSecret string `env:"SSO_SHARED_SECRET"`
+	SSOPublicKeyPEM string `env:"SSO_PUBLIC_KEY_PEM"`
+	SSOIssuer       string `env:"SSO_ISSUER"`
+	SSOAudience     string `env:"SSO_AUDIENCE"`
+	FrontendURL     string `env:"FRONTEND_URL"  envDefault:"http://localhost:5173"`
 }
 
 // DSN returns a MySQL DSN string for database/sql.

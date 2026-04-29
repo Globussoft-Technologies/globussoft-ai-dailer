@@ -59,27 +59,42 @@ func (d *DB) GetFullDashboardStats(orgID int64) (*FullDashboardStats, error) {
 	}
 
 	// ── 1. Aggregate counts ───────────────────────────────────────────────────
-	// Appointment count comes from call_reviews.appointment_booked — the
-	// recording/analysis pipeline (recording.SaveAndAnalyze) writes there,
-	// not to call_transcripts.appointment_booked which stays at its default 0.
-	// Reading the transcript column instead would peg "APPOINTMENT RATE" at
-	// 0% forever, which is why the dashboard looked empty.
-	var totalCalls, callsToday, callsThisWeek, connected, appointments int64
+	// Read transcript-only metrics from call_transcripts alone — no LEFT JOIN
+	// here. The previous version joined call_reviews and used COUNT(*) /
+	// SUM(CASE…), which double-counted any transcript that has more than one
+	// review (the review pipeline can write multiple rows per transcript when
+	// it re-runs). That inflation is what made TotalCalls / CallsToday /
+	// pickup-rate disagree with the campaign / sentiment / language tables on
+	// the same dashboard (issue #45). Appointments are counted separately
+	// below so the join-multiplied row count never bleeds into the tiles.
+	var totalCalls, callsToday, callsThisWeek, connected int64
 	var avgDur float64
 	err := d.pool.QueryRow(`
 		SELECT
 			COUNT(*),
-			COALESCE(SUM(CASE WHEN DATE(ct.created_at)=CURDATE() THEN 1 ELSE 0 END),0),
-			COALESCE(SUM(CASE WHEN ct.created_at>=DATE_SUB(NOW(),INTERVAL 6 DAY) THEN 1 ELSE 0 END),0),
-			COALESCE(SUM(CASE WHEN ct.status NOT IN ('failed','no-answer','busy','initiated') THEN 1 ELSE 0 END),0),
-			COALESCE(SUM(CASE WHEN cr.appointment_booked=1 THEN 1 ELSE 0 END),0),
-			COALESCE(AVG(NULLIF(ct.call_duration_s,0)),0)
-		FROM call_transcripts ct
-		LEFT JOIN call_reviews cr ON cr.transcript_id=ct.id
-		WHERE ct.org_id=?`, orgID).
-		Scan(&totalCalls, &callsToday, &callsThisWeek, &connected, &appointments, &avgDur)
+			COALESCE(SUM(CASE WHEN DATE(created_at)=CURDATE() THEN 1 ELSE 0 END),0),
+			COALESCE(SUM(CASE WHEN created_at>=DATE_SUB(NOW(),INTERVAL 6 DAY) THEN 1 ELSE 0 END),0),
+			COALESCE(SUM(CASE WHEN status NOT IN ('failed','no-answer','busy','initiated') THEN 1 ELSE 0 END),0),
+			COALESCE(AVG(NULLIF(call_duration_s,0)),0)
+		FROM call_transcripts
+		WHERE org_id=?`, orgID).
+		Scan(&totalCalls, &callsToday, &callsThisWeek, &connected, &avgDur)
 	if err != nil {
 		return s, err
+	}
+
+	// Appointments: distinct transcripts that have at least one review with
+	// appointment_booked=1. COUNT(DISTINCT ct.id) protects against the
+	// multi-review-per-transcript fan-out that broke the previous query.
+	var appointments int64
+	if err := d.pool.QueryRow(`
+		SELECT COALESCE(COUNT(DISTINCT ct.id),0)
+		FROM call_transcripts ct
+		JOIN call_reviews cr ON cr.transcript_id=ct.id
+		WHERE ct.org_id=? AND cr.appointment_booked=1`, orgID).
+		Scan(&appointments); err != nil {
+		// Non-fatal — leave at 0 if the review pipeline hasn't populated yet.
+		appointments = 0
 	}
 	s.TotalCalls = totalCalls
 	s.CallsToday = callsToday
@@ -91,14 +106,25 @@ func (d *DB) GetFullDashboardStats(orgID int64) (*FullDashboardStats, error) {
 	}
 
 	// ── 2. Daily calls (last 7 days) ──────────────────────────────────────────
-	// Group/order by the same alias the SELECT produces — MySQL 8's
-	// only_full_group_by doesn't treat DATE_FORMAT(DATE(x)) as functionally
-	// dependent on DATE(x), so we collapse to one expression aliased as `d`.
+	// Always return exactly 7 rows — one per trailing day, padded with 0 for
+	// days that had no calls. Previously the query returned only days that
+	// had data, so the bar chart's day-of-week sequence appeared to start on
+	// a random weekday (issue #45). Recursive CTE generates the date series
+	// (MySQL 8.0+); LEFT JOIN onto call_transcripts so empty days render as
+	// 0 rather than being dropped.
 	rows, err := d.pool.Query(`
-		SELECT DATE_FORMAT(created_at,'%Y-%m-%d') AS d, COUNT(*)
-		FROM call_transcripts
-		WHERE org_id=? AND created_at>=DATE_SUB(NOW(),INTERVAL 6 DAY)
-		GROUP BY d ORDER BY d ASC`, orgID)
+		WITH RECURSIVE days AS (
+			SELECT DATE_SUB(CURDATE(), INTERVAL 6 DAY) AS d
+			UNION ALL
+			SELECT DATE_ADD(d, INTERVAL 1 DAY) FROM days WHERE d < CURDATE()
+		)
+		SELECT DATE_FORMAT(days.d, '%Y-%m-%d') AS day,
+		       COALESCE(COUNT(ct.id), 0) AS cnt
+		FROM days
+		LEFT JOIN call_transcripts ct
+		  ON DATE(ct.created_at) = days.d AND ct.org_id = ?
+		GROUP BY days.d
+		ORDER BY days.d ASC`, orgID)
 	if err != nil {
 		return s, err
 	}

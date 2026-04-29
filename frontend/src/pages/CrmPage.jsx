@@ -34,6 +34,7 @@ export default function CrmPage({
   // Note State
   const [noteLead, setNoteLead] = useState(null);
   const [noteText, setNoteText] = useState('');
+  const [noteSaving, setNoteSaving] = useState(false);
 
   // Document Vault State
   const [activeLeadDocs, setActiveLeadDocs] = useState(null);
@@ -47,8 +48,17 @@ export default function CrmPage({
   const [transcriptLead, setTranscriptLead] = useState(null);
   const [transcripts, setTranscripts] = useState([]);
 
+  // Org-wide dashboard summary (5 numbers). Fetched separately from /api/campaigns
+  // because that route is admin-only — Viewers / Agents need this aggregate
+  // endpoint to see real numbers on the CRM landing dashboard.
+  const [dashSummary, setDashSummary] = useState(null);
+
   useEffect(() => {
     fetchLeads();
+    apiFetch(`${API_URL}/dashboard/summary`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d) setDashSummary(d); })
+      .catch(() => { /* leave as null; CrmTab falls back to per-campaign sum */ });
   }, []);
 
   const fetchLeads = async () => {
@@ -175,16 +185,28 @@ export default function CrmPage({
 
   const handleSaveNote = async () => {
     if (!noteLead) return;
+    const trimmed = noteText.trim();
+    if (!trimmed) { alert('Note cannot be empty'); return; }
+    setNoteSaving(true);
     try {
-      await apiFetch(`${API_URL}/leads/${noteLead.id}/notes`, {
+      const res = await apiFetch(`${API_URL}/leads/${noteLead.id}/notes`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ note: noteText })
+        body: JSON.stringify({ note: trimmed })
       });
+      if (!res.ok) {
+        let msg = `Failed to save note (HTTP ${res.status})`;
+        try { const data = await res.json(); if (data?.error || data?.detail) msg = data.error || data.detail; } catch(_) {}
+        alert(msg);
+        return;
+      }
       fetchLeads();
       setNoteLead(null);
+      setNoteText('');
     } catch(e) {
-      console.error("Error saving note", e);
+      alert('Failed to save note: ' + (e?.message || 'network error'));
+    } finally {
+      setNoteSaving(false);
     }
   };
 
@@ -227,7 +249,8 @@ export default function CrmPage({
         handleDraftEmail={handleDraftEmail} dialingId={dialingId}
         webCallActive={webCallActive} handleWebCall={handleWebCall} handleDial={handleDial}
         campaigns={campaigns}
-        onCampaignClick={() => navigate('/campaigns')}
+        dashSummary={dashSummary}
+        onCampaignClick={(c) => navigate(`/campaigns?id=${c?.id ?? ''}`)}
       />
 
       <LeadModals
@@ -268,8 +291,10 @@ export default function CrmPage({
                 style={{background: 'transparent', border: '1px solid rgba(255,255,255,0.1)', color: '#cbd5e1', padding: '8px 18px', borderRadius: '8px', cursor: 'pointer'}}>
                 Cancel
               </button>
-              <button className="btn-primary" onClick={handleSaveNote}>
-                Save Note
+              <button className="btn-primary" onClick={handleSaveNote}
+                disabled={noteSaving || !noteText.trim()}
+                style={{opacity: (noteSaving || !noteText.trim()) ? 0.5 : 1, cursor: (noteSaving || !noteText.trim()) ? 'not-allowed' : 'pointer'}}>
+                {noteSaving ? 'Saving…' : 'Save Note'}
               </button>
             </div>
           </div>

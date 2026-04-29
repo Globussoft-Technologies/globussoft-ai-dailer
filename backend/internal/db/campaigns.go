@@ -265,6 +265,42 @@ type CampaignStats struct {
 	Appointments int64 `json:"appointments"`
 }
 
+// OrgDashboardSummary is the org-wide top-of-page card row for /crm. Visible
+// to all authenticated roles (Admin / Agent / Viewer) without exposing full
+// campaign objects — that's how non-Admins see meaningful numbers even
+// though /api/campaigns itself is admin-gated.
+type OrgDashboardSummary struct {
+	Campaigns    int64 `json:"campaigns"`
+	TotalLeads   int64 `json:"total_leads"`
+	Called       int64 `json:"called"`
+	Qualified    int64 `json:"qualified"`
+	Appointments int64 `json:"appointments"`
+}
+
+// GetOrgDashboardSummary returns the 5 dashboard numbers (active-campaign
+// count + aggregated lead status counts) for one org. Status filters mirror
+// GetCampaignStats so per-campaign and org-wide totals stay consistent.
+func (d *DB) GetOrgDashboardSummary(orgID int64) (OrgDashboardSummary, error) {
+	var s OrgDashboardSummary
+	if err := d.pool.QueryRow(
+		`SELECT COUNT(*) FROM campaigns WHERE org_id=? AND status='active'`, orgID,
+	).Scan(&s.Campaigns); err != nil {
+		return s, err
+	}
+	err := d.pool.QueryRow(`
+		SELECT
+			COUNT(*) AS total,
+			COALESCE(SUM(CASE WHEN COALESCE(l.status,'new') != 'new' THEN 1 ELSE 0 END), 0) AS called,
+			COALESCE(SUM(CASE WHEN l.status IN ('Warm','Summarized','Closed') THEN 1 ELSE 0 END), 0) AS qualified,
+			COALESCE(SUM(CASE WHEN l.status IN ('Summarized','Closed') THEN 1 ELSE 0 END), 0) AS appointments
+		FROM campaign_leads cl
+		JOIN leads l ON l.id = cl.lead_id
+		JOIN campaigns c ON c.id = cl.campaign_id
+		WHERE c.org_id=?`, orgID,
+	).Scan(&s.TotalLeads, &s.Called, &s.Qualified, &s.Appointments)
+	return s, err
+}
+
 // GetCampaignStats returns 4 aggregate metrics for a campaign.
 func (d *DB) GetCampaignStats(campaignID int64) (CampaignStats, error) {
 	var s CampaignStats
@@ -307,6 +343,13 @@ type CallLogEntry struct {
 }
 
 // GetCampaignCallLog returns the call log for all leads in a campaign.
+//
+// Authoritative filter is ct.campaign_id — every transcript carries the
+// campaign it was placed for. We deliberately do NOT join campaign_leads:
+// Sim Web Call and the quick-dial paths produce a transcript without
+// inserting a campaign_leads row, and the prior INNER JOIN dropped those
+// rows on the floor (call counted in Live Activity / Analytics but
+// invisible in Call Log — see issue #65 ["Call Log only shows 1 row …"]).
 func (d *DB) GetCampaignCallLog(campaignID int64) ([]CallLogEntry, error) {
 	rows, err := d.pool.Query(`
 		SELECT
@@ -324,9 +367,8 @@ func (d *DB) GetCampaignCallLog(campaignID int64) ([]CallLogEntry, error) {
 			END AS outcome
 		FROM call_transcripts ct
 		JOIN leads l ON ct.lead_id=l.id
-		JOIN campaign_leads cl ON l.id=cl.lead_id AND cl.campaign_id=?
 		WHERE ct.campaign_id=?
-		ORDER BY ct.created_at DESC`, campaignID, campaignID)
+		ORDER BY ct.created_at DESC`, campaignID)
 	if err != nil {
 		return nil, err
 	}

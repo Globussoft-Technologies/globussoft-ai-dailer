@@ -15,7 +15,12 @@ export function OrgProvider({ children }) {
   const fetchOrgProducts = useCallback(async (orgId) => {
     try {
       const res = await apiFetch(`${API_URL}/organizations/${orgId}/products`);
-      setOrgProducts(await res.json());
+      const list = await res.json();
+      // Keep the full list (dups and all) so that id-based lookups —
+      // getProductName(campaign.product_id), the campaign header badge —
+      // resolve correctly even when a campaign was bound to a duplicate
+      // row's id. Dropdowns dedupe at their render site instead.
+      setOrgProducts(Array.isArray(list) ? list : []);
     } catch (e) {}
   }, [apiFetch]);
 

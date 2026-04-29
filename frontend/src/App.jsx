@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import ResetPasswordPage from './pages/ResetPasswordPage';
+import SsoReturn from './pages/SsoReturn';
 import MonitorPage from './pages/MonitorPage';
 import KnowledgePage from './pages/KnowledgePage';
 import SandboxPage from './pages/SandboxPage';
@@ -70,9 +71,16 @@ export default function App() {
   }, [currentUser]);
 
   // ─── PUBLIC ROUTES (no auth required) ───
+  // /sso/return is hit before any session exists — the backend's SSO endpoint
+  // bounces the browser here with ?token=<jwt>&next=… for the SPA to commit
+  // the token and continue. Must short-circuit before the authToken gate or
+  // a brand-new SSO user would loop back to AuthPage.
   const location = useLocation();
   if (location.pathname === '/reset-password') {
     return <ResetPasswordPage />;
+  }
+  if (location.pathname === '/sso/return') {
+    return <SsoReturn />;
   }
 
   // ─── AUTH PAGES (after all hooks) ───

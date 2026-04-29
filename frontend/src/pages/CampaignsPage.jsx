@@ -16,6 +16,7 @@ export default function CampaignsPage({
   // Note state (for campaign lead notes)
   const [noteLead, setNoteLead] = useState(null);
   const [noteText, setNoteText] = useState('');
+  const [noteSaving, setNoteSaving] = useState(false);
 
   // Transcript state (for campaign lead transcripts)
   const [transcriptLead, setTranscriptLead] = useState(null);
@@ -49,15 +50,27 @@ export default function CampaignsPage({
 
   const handleSaveNote = async () => {
     if (!noteLead) return;
+    const trimmed = noteText.trim();
+    if (!trimmed) { alert('Note cannot be empty'); return; }
+    setNoteSaving(true);
     try {
-      await apiFetch(`${API_URL}/leads/${noteLead.id}/notes`, {
+      const res = await apiFetch(`${API_URL}/leads/${noteLead.id}/notes`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ note: noteText })
+        body: JSON.stringify({ note: trimmed })
       });
+      if (!res.ok) {
+        let msg = `Failed to save note (HTTP ${res.status})`;
+        try { const data = await res.json(); if (data?.error || data?.detail) msg = data.error || data.detail; } catch(_) {}
+        alert(msg);
+        return;
+      }
       setNoteLead(null);
+      setNoteText('');
     } catch(e) {
-      console.error("Error saving note", e);
+      alert('Failed to save note: ' + (e?.message || 'network error'));
+    } finally {
+      setNoteSaving(false);
     }
   };
 
@@ -98,8 +111,10 @@ export default function CampaignsPage({
                 style={{background: 'transparent', border: '1px solid rgba(255,255,255,0.1)', color: '#cbd5e1', padding: '8px 18px', borderRadius: '8px', cursor: 'pointer'}}>
                 Cancel
               </button>
-              <button className="btn-primary" onClick={handleSaveNote}>
-                Save Note
+              <button className="btn-primary" onClick={handleSaveNote}
+                disabled={noteSaving || !noteText.trim()}
+                style={{opacity: (noteSaving || !noteText.trim()) ? 0.5 : 1, cursor: (noteSaving || !noteText.trim()) ? 'not-allowed' : 'pointer'}}>
+                {noteSaving ? 'Saving…' : 'Save Note'}
               </button>
             </div>
           </div>

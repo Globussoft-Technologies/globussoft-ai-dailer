@@ -100,6 +100,9 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/auth/me", auth(s.me))
 	mux.HandleFunc("POST /api/auth/forgot-password", s.forgotPassword)
 	mux.HandleFunc("POST /api/auth/reset-password", s.resetPassword)
+	// Public SSO entry point — verified by signature on the inbound JWT,
+	// not by our own middleware. See internal/api/sso.go for the flow.
+	mux.HandleFunc("GET /api/auth/sso/jwt", s.ssoJWT)
 
 	// ── Leads ─────────────────────────────────────────────────────────────────
 	// Literal paths must be registered before the {id} wildcard so the mux
@@ -124,21 +127,26 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/leads/by-phone/{phone}/calls", auth(s.getLeadCallsByPhone))
 
 	// ── Campaigns ─────────────────────────────────────────────────────────────
-	// Reads stay open to any authenticated user (CRM agents need to see the
-	// campaigns their leads belong to). Mutations and config writes require
-	// Admin so a non-Admin can't create/modify/delete campaigns or change
-	// per-campaign voice/prompt settings by hitting the API directly.
-	mux.HandleFunc("GET /api/campaigns", auth(s.listCampaigns))
+	// Admin-only across the board. The React route guard already redirects
+	// non-Admins away from /campaigns, /logs and /analytics, but the API was
+	// previously open to any authenticated user — Agent JWTs could read
+	// /api/campaigns, per-campaign /leads, /stats, and /call-log directly.
+	// Closing the read side here makes the page-level guard real (issue #51).
+	// App.jsx fetches /api/campaigns at startup for everyone; non-Admin will
+	// now get 403 there and the existing graceful "expected array" handler
+	// falls back to []. LogsTab also fetches it for the campaign filter,
+	// which only Admins can reach today anyway.
+	mux.HandleFunc("GET /api/campaigns", adminAuth(s.listCampaigns))
 	mux.HandleFunc("POST /api/campaigns", adminAuth(s.createCampaign))
-	mux.HandleFunc("GET /api/campaigns/{id}", auth(s.getCampaign))
+	mux.HandleFunc("GET /api/campaigns/{id}", adminAuth(s.getCampaign))
 	mux.HandleFunc("PUT /api/campaigns/{id}", adminAuth(s.updateCampaign))
 	mux.HandleFunc("DELETE /api/campaigns/{id}", adminAuth(s.deleteCampaign))
-	mux.HandleFunc("GET /api/campaigns/{id}/leads", auth(s.listCampaignLeads))
+	mux.HandleFunc("GET /api/campaigns/{id}/leads", adminAuth(s.listCampaignLeads))
 	mux.HandleFunc("POST /api/campaigns/{id}/leads", adminAuth(s.addCampaignLeads))
 	mux.HandleFunc("DELETE /api/campaigns/{id}/leads/{lead_id}", adminAuth(s.removeCampaignLead))
-	mux.HandleFunc("GET /api/campaigns/{id}/stats", auth(s.getCampaignStats))
-	mux.HandleFunc("GET /api/campaigns/{id}/call-log", auth(s.getCampaignCallLog))
-	mux.HandleFunc("GET /api/campaigns/{id}/voice-settings", auth(s.getCampaignVoiceSettings))
+	mux.HandleFunc("GET /api/campaigns/{id}/stats", adminAuth(s.getCampaignStats))
+	mux.HandleFunc("GET /api/campaigns/{id}/call-log", adminAuth(s.getCampaignCallLog))
+	mux.HandleFunc("GET /api/campaigns/{id}/voice-settings", adminAuth(s.getCampaignVoiceSettings))
 	mux.HandleFunc("PUT /api/campaigns/{id}/voice-settings", adminAuth(s.saveCampaignVoiceSettings))
 	mux.HandleFunc("POST /api/campaigns/{id}/import-csv", adminAuth(s.importCampaignLeadsCSV))
 
@@ -204,6 +212,12 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/scheduled-calls", adminAuth(s.listScheduledCalls))
 	mux.HandleFunc("POST /api/scheduled-calls", adminAuth(s.createScheduledCall))
 	mux.HandleFunc("DELETE /api/scheduled-calls/{id}", adminAuth(s.cancelScheduledCall))
+
+	// ── Dashboard summary ────────────────────────────────────────────────────
+	// 5 aggregate numbers for the CRM landing dashboard. Open to any
+	// authenticated role so Viewers / Agents see real totals even though
+	// /api/campaigns is admin-gated.
+	mux.HandleFunc("GET /api/dashboard/summary", auth(s.dashboardSummary))
 
 	// ── Team ──────────────────────────────────────────────────────────────────
 	// Team management (invite, role change, delete) is strictly Admin.
@@ -344,13 +358,14 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 
 	// ── SSE (Phase 3C) ────────────────────────────────────────────────────────
 	// Live log + campaign-event streams contain real lead PII (names + phone
-	// numbers) for the entire org. Lock to Admin so only operators see the
-	// firehose. The SSE auth gate also reads the token from ?token=… since
-	// EventSource can't set Authorization headers (see middleware.bearerToken).
-	mux.HandleFunc("GET /api/sse/live-logs", adminAuth(s.liveLogs))
-	mux.HandleFunc("GET /api/live-logs", adminAuth(s.liveLogs))
-	mux.HandleFunc("GET /api/sse/campaign/{id}/events", adminAuth(s.campaignEvents))
-	mux.HandleFunc("GET /api/campaign-events", adminAuth(s.campaignEventsQuery))
+	// numbers) for the entire org. SSE endpoints authenticate via a
+	// short-lived ?ticket=… (kind="sse") minted by /api/sse/ticket — the
+	// long-lived auth JWT must never appear in URLs. (issue #80)
+	mux.HandleFunc("GET /api/sse/ticket", adminAuth(s.sseTicket))
+	mux.HandleFunc("GET /api/sse/live-logs", s.requireSSETicket(s.liveLogs))
+	mux.HandleFunc("GET /api/live-logs", s.requireSSETicket(s.liveLogs))
+	mux.HandleFunc("GET /api/sse/campaign/{id}/events", s.requireSSETicket(s.campaignEvents))
+	mux.HandleFunc("GET /api/campaign-events", s.requireSSETicket(s.campaignEventsQuery))
 
 	// ── Test Email (Phase 3B) ─────────────────────────────────────────────────
 	mux.HandleFunc("POST /api/test-email", adminAuth(s.testEmail))

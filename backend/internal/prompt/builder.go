@@ -63,12 +63,33 @@ var voiceNamesBengali = map[string]string{
 	"saina": "সাইনা", "sanya": "সান্যা", "mansi": "মানসী",
 }
 
+// elevenLabsPersona maps ElevenLabs opaque voice IDs to the first-name persona
+// the agent introduces itself as. Without this, every ElevenLabs voice fell
+// back to "Arjun" because the IDs aren't title-case-able like Sarvam IDs.
+var elevenLabsPersona = map[string]string{
+	"oH8YmZXJYEZq5ScgoGn9": "Aakash",
+	"X4ExprIXDKrWcHdtGysh": "Anjura",
+	"SXuKWBhKoIoAHKlf6Gt3": "Gaurav",
+	"N09NFwYJJG9VSSgdLQbT": "Ishan",
+	"U9wNM2BNANqtBCawWLgA": "Himanshu",
+	"h061KGyOtpLYDxcoi8E3": "Ravi",
+	"Ock0AL5DBkvTUDePt4Hm": "Viraj",
+	"nwj0s2LU9bDWRKND5yzA": "Bunty",
+	"amiAXapsDOAiHJqbsAZj": "Priya",
+	"6JsmTroalVewG1gA6Jmw": "Sia",
+	"9vP6R7VVxNwGIGLnpl17": "Suhana",
+	"hO2yZ8lxM3axUxL8OeKX": "Mini",
+	"s0oIsoSJ9raiUm7DJNzW": "Aarav",
+}
+
 var femaleVoices = map[string]bool{
 	"kajal": true, "pragya": true, "nisha": true, "deepika": true, "diya": true,
 	"sushma": true, "shweta": true, "ananya": true, "mithali": true, "saina": true,
 	"sanya": true, "pooja": true, "mansi": true, "priya": true, "ritu": true,
 	"neha": true, "simran": true, "kavya": true, "ishita": true, "shreya": true,
 	"roopa": true,
+	// SmallestAI English female voices
+	"jasmine": true, "emily": true,
 	// ElevenLabs IDs (match Python _female_voices)
 	"amiAXapsDOAiHJqbsAZj": true, "6JsmTroalVewG1gA6Jmw": true,
 	"9vP6R7VVxNwGIGLnpl17": true, "hO2yZ8lxM3axUxL8OeKX": true,
@@ -375,57 +396,78 @@ var langFragments = map[string]langPromptFragments{
 
 // agentIdentity resolves a TTS voice ID into (personaName, bol) where bol is
 // the gender- and language-appropriate "speaking" verb phrase used inside the
+// AgentPersonaName returns the spoken persona name for a voice ID + language —
+// e.g. "Mithali" for ("mithali", "en"), "मिताली" for ("mithali", "hi"). Used
+// by the WS handler to fix up the greeting when a session overrides the voice
+// after the prompt builder has already rendered the greeting using the org
+// default voice's persona.
+func AgentPersonaName(voiceID, language string) string {
+	name, _ := agentIdentity(voiceID, language)
+	return name
+}
+
 // greeting. personaName is rendered in the script appropriate to the language;
 // for Dravidian languages and English we keep a Roman (title-cased) form since
 // the TTS engine pronounces it correctly and a full per-script name table is
 // out of scope. Unknown voice IDs fall back to a locale-appropriate "Arjun".
 func agentIdentity(voiceID, language string) (personaName, bol string) {
-	vid := strings.ToLower(strings.TrimSpace(voiceID))
-	isFemale := femaleVoices[vid]
+	rawID := strings.TrimSpace(voiceID)
+	vid := strings.ToLower(rawID)
+	isFemale := femaleVoices[vid] || femaleVoices[rawID]
+
+	// ElevenLabs IDs are opaque hashes (e.g. "oH8YmZXJYEZq5ScgoGn9") so they
+	// can't be title-cased and aren't in the Deva
+	// nagari/Bengali maps. Look up
+	// a Roman first-name first and use it as the fallback so users hear
+	// "Aakash"/"Anjura"/etc. instead of always "Arjun" with ElevenLabs.
+	romanFallback := "Arjun"
+	if name, ok := elevenLabsPersona[rawID]; ok {
+		romanFallback = name
+	}
 
 	switch language {
 	case "hi":
-		personaName = lookupOr(voiceNamesDevanagari, vid, "अर्जुन")
+		personaName = lookupOr(voiceNamesDevanagari, vid, romanFallback)
 		if isFemale {
 			bol = "बोल रही हूँ"
 		} else {
 			bol = "बोल रहा हूँ"
 		}
 	case "mr":
-		personaName = lookupOr(voiceNamesDevanagari, vid, "अर्जुन")
+		personaName = lookupOr(voiceNamesDevanagari, vid, romanFallback)
 		// Marathi "बोलत आहे" is the same for both genders in this register.
 		bol = "बोलत आहे"
 	case "bn":
-		personaName = lookupOr(voiceNamesBengali, vid, "অর্জুন")
+		personaName = lookupOr(voiceNamesBengali, vid, romanFallback)
 		bol = "বলছি"
 	case "gu":
-		personaName = romanPersona(vid, "Arjun")
+		personaName = romanPersona(rawID, romanFallback)
 		if isFemale {
 			bol = "વાત કરી રહી છું"
 		} else {
 			bol = "વાત કરી રહ્યો છું"
 		}
 	case "pa":
-		personaName = romanPersona(vid, "Arjun")
+		personaName = romanPersona(rawID, romanFallback)
 		if isFemale {
 			bol = "ਬੋਲ ਰਹੀ ਹਾਂ"
 		} else {
 			bol = "ਬੋਲ ਰਿਹਾ ਹਾਂ"
 		}
 	case "ta":
-		personaName = romanPersona(vid, "Arjun")
+		personaName = romanPersona(rawID, romanFallback)
 		bol = "பேசுகிறேன்" // first-person present is gender-neutral
 	case "te":
-		personaName = romanPersona(vid, "Arjun")
+		personaName = romanPersona(rawID, romanFallback)
 		bol = "మాట్లాడుతున్నాను"
 	case "kn":
-		personaName = romanPersona(vid, "Arjun")
+		personaName = romanPersona(rawID, romanFallback)
 		bol = "ಮಾತನಾಡುತ್ತಿದ್ದೇನೆ"
 	case "ml":
-		personaName = romanPersona(vid, "Arjun")
+		personaName = romanPersona(rawID, romanFallback)
 		bol = "സംസാരിക്കുകയാണ്"
 	default:
-		personaName = romanPersona(vid, "Arjun")
+		personaName = romanPersona(rawID, romanFallback)
 		bol = "calling"
 	}
 	return
@@ -438,17 +480,25 @@ func lookupOr(m map[string]string, key, fallback string) string {
 	return fallback
 }
 
-// romanPersona returns a title-cased Roman name for a known voice ID (e.g.
-// "aditya" → "Aditya"). Voice IDs not in the Sarvam/SmallestAI set (e.g.
-// opaque ElevenLabs IDs) get the provided fallback.
-func romanPersona(vid, fallback string) string {
-	if _, ok := voiceNamesDevanagari[vid]; !ok {
+// romanPersona returns a title-cased Roman name when rawID looks like a simple
+// Roman first name (all lowercase a-z, e.g. "aditya" → "Aditya", "james" →
+// "James"). Anything else returns the caller's fallback. The check is on the
+// caller-supplied rawID (NOT a lowercased copy), because ElevenLabs voice IDs
+// like "amiAXapsDOAiHJqbsAZj" become all-lowercase letters when downcased and
+// would otherwise be incorrectly title-cased into gibberish — those IDs always
+// contain at least one uppercase letter (and usually digits) in their raw form,
+// so the loop below rejects them and the caller's fallback (resolved earlier
+// from elevenLabsPersona) is used instead.
+func romanPersona(rawID, fallback string) string {
+	if rawID == "" {
 		return fallback
 	}
-	if vid == "" {
-		return fallback
+	for _, r := range rawID {
+		if r < 'a' || r > 'z' {
+			return fallback
+		}
 	}
-	return strings.ToUpper(vid[:1]) + strings.ToLower(vid[1:])
+	return strings.ToUpper(rawID[:1]) + rawID[1:]
 }
 
 var (

@@ -27,6 +27,22 @@ export default function CampaignModals({
   const nameError = validateCampaignName(createForm.name);
   const showNameError = nameTouched && !!nameError;
 
+  // Render-time dedupe: when the products table has duplicate (org_id, name)
+  // rows from before the API uniqueness check landed, the dropdown shows
+  // "EmpMonitor / EmpMonitor" with two ids. Hide the higher-id dups here so
+  // the dropdown is clean. The full list is kept in orgProducts so id-based
+  // lookups (campaign header badge etc.) still resolve.
+  const dedupedProducts = (() => {
+    const seen = new Map();
+    (orgProducts || []).forEach(p => {
+      const key = (p?.name || '').trim().toLowerCase();
+      if (!key) return;
+      const existing = seen.get(key);
+      if (!existing || p.id < existing.id) seen.set(key, p);
+    });
+    return Array.from(seen.values()).sort((a, b) => b.id - a.id);
+  })();
+
   const handleClose = () => {
     setNameTouched(false);
     setShowCreateModal(false);
@@ -129,7 +145,7 @@ export default function CampaignModals({
                     onChange={e => setCreateForm({...createForm, product_id: e.target.value})}
                     style={{width: '100%'}}>
                     <option value="">-- Select Product --</option>
-                    {orgProducts.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    {dedupedProducts.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                   </select>
                 </div>
                 <div style={{marginBottom: '1.5rem'}}>
@@ -269,7 +285,7 @@ export default function CampaignModals({
                   onChange={e => setEditCampaignForm({...editCampaignForm, product_id: e.target.value})}
                   style={{width: '100%'}}>
                   <option value="">-- Select Product --</option>
-                  {orgProducts.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  {dedupedProducts.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </select>
               </div>
               <div style={{marginBottom: '1.5rem'}}>

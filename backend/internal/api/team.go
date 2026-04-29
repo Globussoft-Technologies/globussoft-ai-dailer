@@ -7,6 +7,22 @@ import (
 	"github.com/globussoft/callified-backend/internal/db"
 )
 
+// ── GET /api/dashboard/summary ────────────────────────────────────────────────
+// Open to any authenticated role (Admin / Agent / Viewer) so the CRM
+// dashboard cards render real numbers even though full /api/campaigns is
+// admin-gated. Returns just the 5 aggregate counts — no campaign objects.
+
+func (s *Server) dashboardSummary(w http.ResponseWriter, r *http.Request) {
+	ac := getAuth(r)
+	summary, err := s.db.GetOrgDashboardSummary(ac.OrgID)
+	if err != nil {
+		s.logger.Sugar().Errorw("dashboardSummary", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, summary)
+}
+
 // ── GET /api/team ─────────────────────────────────────────────────────────────
 
 func (s *Server) listTeam(w http.ResponseWriter, r *http.Request) {
@@ -82,6 +98,38 @@ func (s *Server) deleteTeamMember(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
+	}
+	// Resolve caller's user row so we can compare IDs (the JWT carries email,
+	// not user id) and check the target's role for the last-admin guard. Both
+	// must be in the same org. Issue #54.
+	caller, err := s.db.GetUserByEmail(ac.Email)
+	if err != nil || caller == nil {
+		writeError(w, http.StatusInternalServerError, "could not resolve caller")
+		return
+	}
+	target, err := s.db.GetUserByIDInOrg(id, ac.OrgID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if target == nil {
+		writeError(w, http.StatusNotFound, "user not found")
+		return
+	}
+	if target.ID == caller.ID {
+		writeError(w, http.StatusForbidden, "you cannot remove your own account")
+		return
+	}
+	if target.Role == "Admin" {
+		count, err := s.db.CountAdminsInOrg(ac.OrgID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if count <= 1 {
+			writeError(w, http.StatusForbidden, "cannot remove the last remaining admin")
+			return
+		}
 	}
 	if err := s.db.DeleteUser(id, ac.OrgID); err != nil {
 		s.logger.Sugar().Errorw("deleteTeamMember", "err", err)
