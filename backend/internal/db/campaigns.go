@@ -24,7 +24,12 @@ type Campaign struct {
 	Stats       *CampaignStats `json:"stats,omitempty"`
 }
 
-const campaignCols = `c.id, c.org_id, c.product_id, c.name,
+// COALESCE on product_id because campaigns can legitimately have a NULL
+// product_id (the LEFT JOIN to products surfaces these rows now). Scanning
+// NULL into a Go int64 fails with "converting NULL to int64 is unsupported",
+// so we collapse NULL → 0 here. The frontend treats product_id=0 as "unset"
+// the same way it would treat a missing FK.
+const campaignCols = `c.id, c.org_id, COALESCE(c.product_id,0), c.name,
 	COALESCE(c.status,'active'), COALESCE(c.tts_provider,''), COALESCE(c.tts_voice_id,''),
 	COALESCE(c.tts_language,''), COALESCE(c.lead_source,''),
 	COALESCE(c.channel,'voice'),
@@ -53,12 +58,17 @@ func (d *DB) GetCampaignsByOrg(orgID int64) ([]Campaign, error) {
 		JOIN leads l ON l.id = cl.lead_id
 		GROUP BY cl.campaign_id`
 
+	// LEFT JOIN to products so campaigns whose product_id is NULL or points
+	// at a deleted product still appear in the listing. INNER JOIN here used
+	// to silently drop them, while the dashboard summary's COUNT(*) over
+	// campaigns counted them — leading to "metric says 3 but only 2 cards
+	// render" reports.
 	rows, err := d.pool.Query(
 		`SELECT `+campaignCols+`,
 			COALESCE(s.total,0), COALESCE(s.called,0),
 			COALESCE(s.qualified,0), COALESCE(s.appointments,0)
 		FROM campaigns c
-		JOIN products p ON c.product_id = p.id
+		LEFT JOIN products p ON c.product_id = p.id
 		LEFT JOIN (`+statsSub+`) s ON s.campaign_id = c.id
 		WHERE c.org_id=?
 		ORDER BY c.created_at DESC`, orgID)
@@ -84,9 +94,12 @@ func (d *DB) GetCampaignsByOrg(orgID int64) ([]Campaign, error) {
 }
 
 // GetCampaignByID fetches one campaign. Returns nil when not found.
+// LEFT JOIN to products mirrors GetCampaignsByOrg — a campaign with a NULL
+// or deleted product_id is still a valid row to fetch (e.g. the user is
+// opening it to fix the broken product link).
 func (d *DB) GetCampaignByID(id int64) (*Campaign, error) {
 	row := d.pool.QueryRow(
-		`SELECT `+campaignCols+` FROM campaigns c JOIN products p ON c.product_id=p.id WHERE c.id=?`, id)
+		`SELECT `+campaignCols+` FROM campaigns c LEFT JOIN products p ON c.product_id=p.id WHERE c.id=?`, id)
 	c, err := scanCampaign(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil

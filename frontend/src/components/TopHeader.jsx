@@ -36,6 +36,10 @@ export default function TopHeader({
   const [callingStatus, setCallingStatus] = useState(null);
   const [moreOpen, setMoreOpen] = useState(false);
   const [moreCoords, setMoreCoords] = useState({ top: 0, left: 0 });
+  // Inline two-button confirm for the Logout action — matches the Campaigns
+  // tab delete-row pattern (issue #38). First click flips the button into a
+  // "Logout? Yes / No" trio; second click on Yes actually signs out.
+  const [logoutConfirm, setLogoutConfirm] = useState(false);
   const moreRef = useRef(null);
   const moreBtnRef = useRef(null);
   const morePopupRef = useRef(null);
@@ -125,33 +129,52 @@ export default function TopHeader({
         {moreOpen && overflow.length > 0 && (
           <div role="menu" ref={morePopupRef} style={{
             position: 'fixed', top: moreCoords.top, left: moreCoords.left, zIndex: 9999,
-            minWidth: '220px', maxHeight: '70vh', overflowY: 'auto',
+            minWidth: '230px', maxHeight: '70vh', overflowY: 'auto',
             background: 'rgba(15,23,42,0.97)', backdropFilter: 'blur(16px)',
             WebkitBackdropFilter: 'blur(16px)',
             border: '1px solid rgba(255,255,255,0.08)', borderRadius: '10px',
             boxShadow: '0 12px 32px rgba(0,0,0,0.45)', padding: '6px',
+            display: 'flex', flexDirection: 'column', gap: '4px',
           }}>
-            {overflow.map(t => (
-              <button
-                key={t.key}
-                type="button"
-                role="menuitem"
-                data-testid={t.testId}
-                onClick={() => { setMoreOpen(false); navigate(t.path); }}
-                style={{
-                  display: 'block', width: '100%', textAlign: 'left',
-                  padding: '8px 12px', borderRadius: '6px',
-                  background: activeTab === t.key ? 'rgba(99,102,241,0.18)' : 'transparent',
-                  border: 'none',
-                  color: activeTab === t.key ? '#c7d2fe' : '#cbd5e1',
-                  fontSize: '0.85rem', fontWeight: 600, cursor: 'pointer',
-                }}
-                onMouseEnter={e => { if (activeTab !== t.key) e.currentTarget.style.background = 'rgba(255,255,255,0.05)'; }}
-                onMouseLeave={e => { if (activeTab !== t.key) e.currentTarget.style.background = 'transparent'; }}
-              >
-                {t.label}
-              </button>
-            ))}
+            {overflow.map(t => {
+              const isActive = activeTab === t.key;
+              return (
+                <button
+                  key={t.key}
+                  type="button"
+                  role="menuitem"
+                  data-testid={t.testId}
+                  onClick={() => { setMoreOpen(false); navigate(t.path); }}
+                  style={{
+                    display: 'block', width: '100%', textAlign: 'left',
+                    // Each item rendered as its own card: subtle background +
+                    // 1px border so the rows feel distinct (not just text in
+                    // a list). Active row gets the stronger indigo tint and
+                    // a matching border so the current page is unmistakable.
+                    padding: '9px 12px', borderRadius: '8px',
+                    background: isActive ? 'rgba(99,102,241,0.20)' : 'rgba(255,255,255,0.03)',
+                    border: isActive ? '1px solid rgba(99,102,241,0.55)' : '1px solid rgba(255,255,255,0.06)',
+                    color: isActive ? '#e0e7ff' : '#cbd5e1',
+                    fontSize: '0.85rem', fontWeight: 600, cursor: 'pointer',
+                    transition: 'background 0.15s, border-color 0.15s',
+                  }}
+                  onMouseEnter={e => {
+                    if (!isActive) {
+                      e.currentTarget.style.background = 'rgba(255,255,255,0.07)';
+                      e.currentTarget.style.borderColor = 'rgba(255,255,255,0.12)';
+                    }
+                  }}
+                  onMouseLeave={e => {
+                    if (!isActive) {
+                      e.currentTarget.style.background = 'rgba(255,255,255,0.03)';
+                      e.currentTarget.style.borderColor = 'rgba(255,255,255,0.06)';
+                    }
+                  }}
+                >
+                  {t.label}
+                </button>
+              );
+            })}
           </div>
         )}
 
@@ -197,24 +220,63 @@ export default function TopHeader({
               👤 {currentUser.full_name || currentUser.email}{currentUser.org_name ? ` (${currentUser.org_name})` : ''}
             </span>
           )}
-          <button data-testid="logout-btn" onClick={handleLogout}
-            style={{
+          {logoutConfirm ? (
+            // Confirm state lives inside the same red-tinted "Logout box" so
+            // the nav layout doesn't shift width when the button flips. The
+            // inner Yes/No are nested buttons matching the Campaigns delete
+            // confirm style.
+            <div style={{
               height: '38px',
               display: 'inline-flex',
               alignItems: 'center',
-              gap: '5px',
-              padding: '0 14px',
+              gap: '8px',
+              padding: '0 12px',
               background: 'rgba(239,68,68,0.15)',
               border: '1px solid rgba(239,68,68,0.3)',
               borderRadius: '8px',
               color: '#fca5a5',
-              cursor: 'pointer',
               fontWeight: 600,
               fontSize: '0.82rem',
               whiteSpace: 'nowrap',
             }}>
-            🚪 Logout
-          </button>
+              <span>Logout?</span>
+              <button data-testid="logout-confirm-yes" onClick={handleLogout}
+                style={{
+                  background: 'rgba(239,68,68,0.25)', border: '1px solid rgba(239,68,68,0.6)',
+                  color: '#fecaca', borderRadius: '6px', padding: '3px 10px',
+                  cursor: 'pointer', fontSize: '0.72rem', fontWeight: 700,
+                }}>
+                Yes
+              </button>
+              <button data-testid="logout-confirm-no" onClick={() => setLogoutConfirm(false)}
+                style={{
+                  background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.15)',
+                  color: '#e2e8f0', borderRadius: '6px', padding: '3px 10px',
+                  cursor: 'pointer', fontSize: '0.72rem', fontWeight: 600,
+                }}>
+                No
+              </button>
+            </div>
+          ) : (
+            <button data-testid="logout-btn" onClick={() => setLogoutConfirm(true)}
+              style={{
+                height: '38px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '5px',
+                padding: '0 14px',
+                background: 'rgba(239,68,68,0.15)',
+                border: '1px solid rgba(239,68,68,0.3)',
+                borderRadius: '8px',
+                color: '#fca5a5',
+                cursor: 'pointer',
+                fontWeight: 600,
+                fontSize: '0.82rem',
+                whiteSpace: 'nowrap',
+              }}>
+              🚪 Logout
+            </button>
+          )}
         </div>
       </div>
     </header>

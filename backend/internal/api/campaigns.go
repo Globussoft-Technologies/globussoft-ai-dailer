@@ -427,3 +427,24 @@ func (s *Server) getCampaignCallReviews(w http.ResponseWriter, r *http.Request) 
 	}
 	writeJSON(w, http.StatusOK, emptyJSON(reviews))
 }
+
+// ── GET /api/campaigns/{id}/call-insights ─────────────────────────────────────
+// Aggregates call_reviews rows for a campaign into the summary cards +
+// improvement/failure lists the Insights tab renders. Was missing entirely
+// before — the tab fell back to the empty per-call list and showed the
+// "no reviews yet" empty state forever. Issue #75.
+
+func (s *Server) getCampaignCallInsights(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	insights, err := s.db.GetCampaignCallInsights(id)
+	if err != nil {
+		s.logger.Sugar().Errorw("getCampaignCallInsights", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, insights)
+}

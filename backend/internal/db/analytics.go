@@ -156,11 +156,14 @@ func (d *DB) GetFullDashboardStats(orgID int64) (*FullDashboardStats, error) {
 	}
 
 	// ── 4. Campaign performance ───────────────────────────────────────────────
-	// Same fix as block 1 — appointment count comes from call_reviews.
+	// COUNT(DISTINCT ct.id) — without DISTINCT, the LEFT JOIN to call_reviews
+	// fans each transcript out into N rows when the review pipeline writes more
+	// than one review per transcript, which made the campaign table's totals
+	// disagree with the Total Calls tile (issue #45).
 	cpRows, err := d.pool.Query(`
 		SELECT ct.campaign_id, c.name,
-			COUNT(*) AS calls,
-			COALESCE(SUM(CASE WHEN cr.appointment_booked=1 THEN 1 ELSE 0 END),0) AS appts,
+			COUNT(DISTINCT ct.id) AS calls,
+			COUNT(DISTINCT CASE WHEN cr.appointment_booked=1 THEN ct.id END) AS appts,
 			COALESCE(AVG(cr.quality_score),0) AS avg_score
 		FROM call_transcripts ct
 		JOIN campaigns c ON ct.campaign_id=c.id
@@ -203,15 +206,24 @@ func (d *DB) GetFullDashboardStats(orgID int64) (*FullDashboardStats, error) {
 }
 
 // GetLanguagePerformance returns per-language call metrics for an org.
+// COUNT(DISTINCT ct.id) is required because the LEFT JOIN to call_reviews
+// produces one row per review — without DISTINCT, total_calls would be the
+// sum of reviews instead of transcripts (issue #45).
+//
+// Older transcripts pre-date the tts_language column being written on each
+// call; for those, fall back to the parent campaign's tts_language so the
+// breakdown isn't dominated by an "unknown" bucket of historical data. Only
+// transcripts whose campaign also has no language remain "unknown".
 func (d *DB) GetLanguagePerformance(orgID int64) ([]LanguagePerf, error) {
 	rows, err := d.pool.Query(`
 		SELECT
-			COALESCE(ct.tts_language,'unknown') AS language,
-			COUNT(*) AS total_calls,
-			COALESCE(SUM(CASE WHEN ct.appointment_booked=1 THEN 1 ELSE 0 END),0) AS appointments,
+			COALESCE(NULLIF(ct.tts_language,''), NULLIF(c.tts_language,''), 'unknown') AS language,
+			COUNT(DISTINCT ct.id) AS total_calls,
+			COUNT(DISTINCT CASE WHEN ct.appointment_booked=1 THEN ct.id END) AS appointments,
 			COALESCE(AVG(NULLIF(ct.call_duration_s,0)),0) AS avg_duration,
 			COALESCE(AVG(cr.quality_score),0) AS avg_score
 		FROM call_transcripts ct
+		LEFT JOIN campaigns c ON ct.campaign_id=c.id
 		LEFT JOIN call_reviews cr ON cr.transcript_id=ct.id
 		WHERE ct.org_id=?
 		GROUP BY language ORDER BY total_calls DESC`, orgID)

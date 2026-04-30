@@ -123,6 +123,7 @@ export default function CampaignDetail({
   const [callInsights, setCallInsights] = useState(null);
   const [callReviews, setCallReviews] = useState([]);
   const [insightsLoading, setInsightsLoading] = useState(false);
+  const [insightsError, setInsightsError] = useState('');
   const [billingUsage, setBillingUsage] = useState(null);
   const [retries, setRetries] = useState([]);
   const [retriesLoading, setRetriesLoading] = useState(false);
@@ -132,17 +133,41 @@ export default function CampaignDetail({
   const [scheduleAt, setScheduleAt] = useState('');
   const [scheduleNotes, setScheduleNotes] = useState('');
   const [scheduleSaving, setScheduleSaving] = useState(false);
+  const [scheduleStatus, setScheduleStatus] = useState({ kind: '', text: '' });
+
+  const [qaName, setQaName] = useState('');
+  const [qaPhone, setQaPhone] = useState('');
+  const [qaNameErr, setQaNameErr] = useState('');
+  const [qaPhoneErr, setQaPhoneErr] = useState('');
+  const [qaApiErr, setQaApiErr] = useState('');
 
   const fetchInsights = async () => {
     setInsightsLoading(true);
+    setInsightsError('');
     try {
       const [insightsRes, reviewsRes] = await Promise.all([
         apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/call-insights`),
         apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/call-reviews`),
       ]);
-      setCallInsights(await insightsRes.json());
-      setCallReviews(await reviewsRes.json());
-    } catch (e) { console.error('Failed to fetch insights', e); }
+      // Surface non-OK responses instead of silently swallowing them — the
+      // tab used to render the "no reviews yet" empty state forever when
+      // /call-insights 404'd. Issue #75.
+      if (!insightsRes.ok) {
+        setCallInsights(null);
+        setInsightsError(`Insights endpoint returned ${insightsRes.status}`);
+      } else {
+        setCallInsights(await insightsRes.json());
+      }
+      if (!reviewsRes.ok) {
+        setCallReviews([]);
+        if (!insightsError) setInsightsError(`Reviews endpoint returned ${reviewsRes.status}`);
+      } else {
+        setCallReviews(await reviewsRes.json());
+      }
+    } catch (e) {
+      console.error('Failed to fetch insights', e);
+      setInsightsError('Network error loading call insights');
+    }
     setInsightsLoading(false);
   };
 
@@ -200,9 +225,13 @@ export default function CampaignDetail({
 
       <div style={{display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '1.5rem', flexWrap: 'wrap'}}>
         <h2 style={{margin: 0, color: '#e2e8f0'}}>{selectedCampaign.name}</h2>
-        {selectedCampaign.product_id && (
+        {selectedCampaign.product_id > 0 ? (
           <span className="badge" style={{background: 'rgba(6,182,212,0.2)', color: '#22d3ee', fontSize: '0.75rem', padding: '2px 10px', borderRadius: '12px'}}>
             {getProductName(selectedCampaign.product_id)}
+          </span>
+        ) : (
+          <span className="badge" style={{background: 'rgba(234,179,8,0.15)', color: '#fbbf24', fontSize: '0.75rem', padding: '2px 10px', borderRadius: '12px'}}>
+            ⚠ No product linked
           </span>
         )}
         {statusBadge(selectedCampaign.status)}
@@ -351,20 +380,48 @@ export default function CampaignDetail({
       )}
 
       {/* Quick Add Lead Form */}
-      <div className="glass-panel" style={{padding: '12px', marginBottom: '1rem', display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap'}}>
-        <span style={{fontSize: '0.8rem', color: '#94a3b8', fontWeight: 600}}>➕ Quick Add:</span>
-        <input className="form-input" placeholder="Name" id="qa-name"
-          style={{width: '120px', height: '32px', fontSize: '0.8rem', padding: '4px 8px'}} />
-        <input className="form-input" placeholder="Phone (10 digits)" id="qa-phone"
-          inputMode="numeric" maxLength={10} pattern="\d{10}"
-          onInput={e => { e.target.value = e.target.value.replace(/\D/g, '').slice(0, 10); }}
-          style={{width: '150px', height: '32px', fontSize: '0.8rem', padding: '4px 8px'}} />
+      <div className="glass-panel" style={{padding: '12px', marginBottom: '1rem', display: 'flex', gap: '8px', alignItems: 'flex-start', flexWrap: 'wrap'}}>
+        <span style={{fontSize: '0.8rem', color: '#94a3b8', fontWeight: 600, height: '32px', display: 'flex', alignItems: 'center'}}>➕ Quick Add:</span>
+        <div style={{display: 'flex', flexDirection: 'column'}}>
+          <input className="form-input" placeholder="Name" value={qaName}
+            onChange={e => {
+              const v = e.target.value;
+              setQaName(v);
+              const t = v.trim();
+              if (!t) setQaNameErr('');
+              else if (/\d/.test(t) || !/[A-Za-z]/.test(t)) setQaNameErr('Name must contain only letters');
+              else setQaNameErr('');
+            }}
+            style={{width: '120px', height: '32px', fontSize: '0.8rem', padding: '4px 8px',
+              border: qaNameErr ? '1px solid #ef4444' : undefined}} />
+          {qaNameErr && <span style={{color: '#ef4444', fontSize: '0.7rem', marginTop: '4px'}}>{qaNameErr}</span>}
+        </div>
+        <div style={{display: 'flex', flexDirection: 'column'}}>
+          <input className="form-input" placeholder="Phone (10 digits)" value={qaPhone}
+            inputMode="numeric" maxLength={10} pattern="\d{10}"
+            onChange={e => {
+              const v = e.target.value.replace(/\D/g, '').slice(0, 10);
+              setQaPhone(v);
+              if (qaPhoneErr) setQaPhoneErr('');
+            }}
+            style={{width: '150px', height: '32px', fontSize: '0.8rem', padding: '4px 8px',
+              border: qaPhoneErr ? '1px solid #ef4444' : undefined}} />
+          {qaPhoneErr && <span style={{color: '#ef4444', fontSize: '0.7rem', marginTop: '4px'}}>{qaPhoneErr}</span>}
+        </div>
         <button className="btn-primary" style={{height: '32px', fontSize: '0.8rem', padding: '4px 12px'}}
           onClick={async () => {
-            const name = document.getElementById('qa-name').value.trim();
-            const phone = document.getElementById('qa-phone').value.trim();
-            if (!name || !phone) { alert('Name and phone required'); return; }
-            if (!/^\d{10}$/.test(phone)) { alert('Phone must be exactly 10 digits'); return; }
+            const name = qaName.trim();
+            const phone = qaPhone.trim();
+            const nameErr = !name
+              ? 'Name is required'
+              : (!/[A-Za-z]/.test(name) || /\d/.test(name) ? 'Name must contain only letters' : '');
+            const phoneErr = !phone
+              ? 'Phone is required'
+              : (!/^\d{10}$/.test(phone) ? 'Indian numbers must be exactly 10 digits' : '');
+            setQaNameErr(nameErr);
+            setQaPhoneErr(phoneErr);
+            setQaApiErr('');
+            if (nameErr || phoneErr) return;
             try {
               const res = await apiFetch(`${API_URL}/leads`, {
                 method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -374,6 +431,11 @@ export default function CampaignDetail({
               let leadId = data.id;
               const errMsg = data.error || data.message || '';
               const isDuplicate = res.status === 409 || errMsg.includes('already exists');
+              if (data.fields && typeof data.fields === 'object') {
+                if (data.fields.first_name) setQaNameErr(data.fields.first_name);
+                if (data.fields.phone) setQaPhoneErr(data.fields.phone);
+                if (!isDuplicate) return;
+              }
               if (!leadId && isDuplicate) {
                 const searchRes = await apiFetch(`${API_URL}/leads/search?q=${encodeURIComponent(phone)}`);
                 const found = await searchRes.json();
@@ -384,13 +446,14 @@ export default function CampaignDetail({
                   method: 'POST', headers: {'Content-Type': 'application/json'},
                   body: JSON.stringify({ lead_ids: [leadId] })
                 });
-                document.getElementById('qa-name').value = '';
-                document.getElementById('qa-phone').value = '';
+                setQaName('');
+                setQaPhone('');
                 fetchCampaignLeads(selectedCampaign.id);
                 fetchCampaigns();
-              } else { alert(errMsg || `Error (${res.status})`); }
-            } catch(e) { alert('Failed: ' + (e?.message || 'network error')); }
+              } else if (!data.fields) { setQaApiErr(errMsg || `Error (${res.status})`); }
+            } catch(e) { setQaApiErr('Failed: ' + (e?.message || 'network error')); }
           }}>Add & Assign</button>
+        {qaApiErr && <span style={{color: '#ef4444', fontSize: '0.75rem', width: '100%', marginTop: '4px'}}>{qaApiErr}</span>}
       </div>
 
       {selectedCampaign.channel === 'whatsapp' && (
@@ -520,16 +583,19 @@ export default function CampaignDetail({
                       </span>
                     </td>
                     <td>
-                      {review ? (
-                        <span style={{
-                          padding: '2px 8px', borderRadius: '10px', fontSize: '0.75rem', fontWeight: 700,
-                          color: scoreColor(review.quality_score),
-                          background: `${scoreColor(review.quality_score)}18`,
-                          border: `1px solid ${scoreColor(review.quality_score)}40`
-                        }}>
-                          {'★'.repeat(review.quality_score)}{'☆'.repeat(5 - review.quality_score)}
-                        </span>
-                      ) : (
+                      {review ? (() => {
+                        const q = Math.max(0, Math.min(5, Math.round(Number(review.quality_score) || 0)));
+                        return (
+                          <span style={{
+                            padding: '2px 8px', borderRadius: '10px', fontSize: '0.75rem', fontWeight: 700,
+                            color: scoreColor(q),
+                            background: `${scoreColor(q)}18`,
+                            border: `1px solid ${scoreColor(q)}40`
+                          }}>
+                            {'★'.repeat(q)}{'☆'.repeat(5 - q)}
+                          </span>
+                        );
+                      })() : (
                         <span style={{color: '#64748b', fontSize: '0.75rem'}}>--</span>
                       )}
                     </td>
@@ -561,6 +627,11 @@ export default function CampaignDetail({
         <div style={{marginBottom: '1.5rem'}}>
           {insightsLoading ? (
             <div className="glass-panel" style={{padding: '2rem', textAlign: 'center', color: '#94a3b8'}}>Loading insights...</div>
+          ) : insightsError ? (
+            <div className="glass-panel" style={{padding: '2rem', textAlign: 'center', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.3)'}}>
+              <div style={{fontWeight: 600, marginBottom: '6px'}}>Call Insights are temporarily unavailable</div>
+              <div style={{fontSize: '0.8rem', color: '#94a3b8'}}>{insightsError}</div>
+            </div>
           ) : !callInsights || callInsights.total_reviews === 0 ? (
             <div className="glass-panel" style={{padding: '2rem', textAlign: 'center', color: '#64748b'}}>No call reviews yet. Reviews are generated automatically after each call.</div>
           ) : (
@@ -631,6 +702,7 @@ export default function CampaignDetail({
                       <th>Lead</th>
                       <th>Quality</th>
                       <th>Appt Booked</th>
+                      <th>Date / Time</th>
                       <th>Sentiment</th>
                       <th>What Went Well</th>
                       <th>What Went Wrong</th>
@@ -642,9 +714,16 @@ export default function CampaignDetail({
                       <tr key={r.id}>
                         <td style={{fontWeight: 600}}>{r.first_name} {r.last_name || ''}</td>
                         <td>
-                          <span style={{fontWeight: 700, color: scoreColor(r.quality_score), fontSize: '0.9rem'}}>
-                            {'★'.repeat(r.quality_score)}{'☆'.repeat(5 - r.quality_score)}
-                          </span>
+                          {(() => {
+                            // Clamp to 0..5 — old rows have scores outside that range
+                            // (some are 0..10), which would crash String.repeat().
+                            const q = Math.max(0, Math.min(5, Math.round(Number(r.quality_score) || 0)));
+                            return (
+                              <span style={{fontWeight: 700, color: scoreColor(q), fontSize: '0.9rem'}}>
+                                {'★'.repeat(q)}{'☆'.repeat(5 - q)}
+                              </span>
+                            );
+                          })()}
                         </td>
                         <td>
                           <span style={{
@@ -654,6 +733,9 @@ export default function CampaignDetail({
                           }}>
                             {r.appointment_booked ? 'Yes' : 'No'}
                           </span>
+                        </td>
+                        <td style={{fontSize: '0.8rem', color: '#94a3b8', whiteSpace: 'nowrap'}}>
+                          {formatDateTime(r.created_at, orgTimezone)}
                         </td>
                         <td>
                           <span style={{color: sentimentColor(r.customer_sentiment), fontWeight: 600, fontSize: '0.85rem'}}>
@@ -848,7 +930,7 @@ export default function CampaignDetail({
           <div className="modal-content glass-panel" style={{maxWidth: '440px', padding: '1.5rem'}}>
             <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem'}}>
               <h3 style={{margin: 0, color: '#e2e8f0'}}>📅 Schedule Call</h3>
-              <button onClick={() => setScheduleLead(null)}
+              <button onClick={() => { setScheduleLead(null); setScheduleStatus({ kind: '', text: '' }); }}
                 style={{background: 'transparent', border: 'none', color: '#94a3b8', fontSize: '1.2rem', cursor: 'pointer'}}>✕</button>
             </div>
             <p style={{color: '#94a3b8', fontSize: '0.85rem', marginBottom: '1.25rem'}}>
@@ -861,8 +943,12 @@ export default function CampaignDetail({
                   type="datetime-local"
                   className="form-input"
                   value={scheduleAt}
-                  onChange={e => setScheduleAt(e.target.value)}
-                  min={(() => { const d = new Date(); d.setSeconds(0, 0); return d.toISOString().slice(0, 16); })()}
+                  onChange={e => { setScheduleAt(e.target.value); if (scheduleStatus.kind) setScheduleStatus({ kind: '', text: '' }); }}
+                  min={(() => {
+                    const d = new Date();
+                    const pad = n => String(n).padStart(2, '0');
+                    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+                  })()}
                   style={{width: '100%', marginTop: '6px'}}
                 />
               </label>
@@ -878,8 +964,16 @@ export default function CampaignDetail({
                 />
               </label>
             </div>
+            {scheduleStatus.kind === 'error' && (
+              <div style={{
+                marginTop: '1rem', padding: '8px 12px', borderRadius: '6px', fontSize: '0.8rem',
+                background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)', color: '#ef4444'
+              }}>
+                ⚠️ {scheduleStatus.text}
+              </div>
+            )}
             <div style={{display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '1.25rem'}}>
-              <button onClick={() => setScheduleLead(null)}
+              <button onClick={() => { setScheduleLead(null); setScheduleStatus({ kind: '', text: '' }); }}
                 style={{background: 'transparent', border: '1px solid rgba(255,255,255,0.1)', color: '#cbd5e1', padding: '8px 18px', borderRadius: '8px', cursor: 'pointer'}}>
                 Cancel
               </button>
@@ -888,15 +982,13 @@ export default function CampaignDetail({
                 disabled={scheduleSaving || !scheduleAt}
                 onClick={async () => {
                   if (!scheduleAt) return;
+                  if (new Date(scheduleAt).getTime() <= Date.now()) {
+                    setScheduleStatus({ kind: 'error', text: 'Please pick a future date and time.' });
+                    return;
+                  }
+                  setScheduleStatus({ kind: '', text: '' });
                   setScheduleSaving(true);
                   try {
-                    // <input type="datetime-local"> gives a naive local-time
-                    // string ("2026-04-25T10:20"). new Date() interprets it in
-                    // the browser's local TZ, then toISOString() emits UTC
-                    // RFC3339 — which the backend parses as the first branch.
-                    // Without this, the value would be stored as UTC verbatim
-                    // and the scheduler (which compares against UTC NOW())
-                    // would not pick it up until the local time matched UTC.
                     const serverTime = new Date(scheduleAt).toISOString();
                     const res = await apiFetch(`${API_URL}/scheduled-calls`, {
                       method: 'POST',
@@ -910,13 +1002,14 @@ export default function CampaignDetail({
                     });
                     if (!res.ok) {
                       const data = await res.json().catch(() => ({}));
-                      alert('Failed to schedule: ' + (data.error || data.detail || res.status));
+                      setScheduleStatus({ kind: 'error',
+                        text: 'Failed to schedule: ' + (data.error || data.detail || res.status) });
                     } else {
                       setScheduleLead(null);
-                      alert('✅ Call scheduled. Visit the Scheduled page to manage it.');
+                      setScheduleStatus({ kind: '', text: '' });
                     }
                   } catch (e) {
-                    alert('Network error while scheduling.');
+                    setScheduleStatus({ kind: 'error', text: 'Network error while scheduling.' });
                   }
                   setScheduleSaving(false);
                 }}>

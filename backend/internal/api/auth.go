@@ -25,8 +25,12 @@ type signupRequest struct {
 
 func (s *Server) signup(w http.ResponseWriter, r *http.Request) {
 	var req signupRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Email == "" || req.Password == "" {
-		writeError(w, http.StatusBadRequest, "email and password required")
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Email == "" {
+		writeError(w, http.StatusBadRequest, "Email is required.")
+		return
+	}
+	if msg := validatePassword(req.Password); msg != "" {
+		writeError(w, http.StatusBadRequest, msg)
 		return
 	}
 
@@ -304,8 +308,8 @@ func (s *Server) resetPassword(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "token and new_password required")
 		return
 	}
-	if len(req.NewPassword) < 6 {
-		writeError(w, http.StatusBadRequest, "Password must be at least 6 characters")
+	if msg := validatePassword(req.NewPassword); msg != "" {
+		writeError(w, http.StatusBadRequest, msg)
 		return
 	}
 	tokenRow, err := s.db.GetValidResetToken(req.Token)

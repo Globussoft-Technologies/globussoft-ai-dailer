@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 )
 
 // GET /api/wa/channels
@@ -154,7 +155,16 @@ func (s *Server) getWAConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cfg := configs[0]
+	// Merge the JSON credentials column with the legacy flat columns so any
+	// provider's full field set surfaces. Flat columns win on conflict for
+	// backwards-compatibility with rows written before the JSON column was
+	// wired through (those rows have flat values but `credentials='{}'`).
 	creds := map[string]string{}
+	for k, v := range cfg.Credentials {
+		if v != "" {
+			creds[k] = v
+		}
+	}
 	if cfg.APIKey != "" {
 		creds["api_key"] = cfg.APIKey
 	}
@@ -173,6 +183,14 @@ func (s *Server) getWAConfig(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// validWAProviders is the closed set of WA channel providers the backend
+// supports. Bonus side-effect: rejecting unknown providers at save time means
+// we never try to render a webhook URL or persist a config for a typo'd
+// provider name that no provider-specific code path would ever read.
+var validWAProviders = map[string]bool{
+	"gupshup": true, "wati": true, "aisensei": true, "interakt": true, "meta": true,
+}
+
 // POST /api/wa/config — upsert the org's single WA channel config. The
 // frontend posts `{provider, credentials{}, default_product_id, auto_reply}`;
 // we fan it out onto the flat columns. UNIQUE(org_id,provider) makes this
@@ -189,6 +207,30 @@ func (s *Server) saveWAConfig(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "provider required")
 		return
 	}
+	body.Provider = strings.TrimSpace(body.Provider)
+	if !validWAProviders[body.Provider] {
+		writeError(w, http.StatusBadRequest, "unknown provider")
+		return
+	}
+	// Require at least one non-empty credential. The previous handler
+	// happily upserted a row with all-empty {api_key, app_id, phone_number,
+	// webhook_url} columns when the modal Save fired with blank inputs —
+	// resulting in a "configured" channel that silently fails on the first
+	// outbound send. Per-provider key validation is deferred (see #46
+	// follow-up: backend reads `app_id`/`phone_number` while the gupshup UI
+	// posts `app_name`/`source_phone`, so a strict check here would need
+	// the key-name reconciliation first).
+	hasAnyCred := false
+	for _, v := range body.Credentials {
+		if strings.TrimSpace(v) != "" {
+			hasAnyCred = true
+			break
+		}
+	}
+	if !hasAnyCred {
+		writeError(w, http.StatusBadRequest, "at least one credential is required")
+		return
+	}
 	apiKey := body.Credentials["api_key"]
 	appID := body.Credentials["app_id"]
 	phone := body.Credentials["phone_number"]
@@ -196,7 +238,7 @@ func (s *Server) saveWAConfig(w http.ResponseWriter, r *http.Request) {
 
 	// UNIQUE(org_id, provider) turns this INSERT into an upsert. Avoids the
 	// need for a separate update path + lookup.
-	if _, err := s.db.UpsertWAChannelConfig(ac.OrgID, body.Provider, phone, apiKey, appID, webhookURL, body.AutoReply); err != nil {
+	if _, err := s.db.UpsertWAChannelConfig(ac.OrgID, body.Provider, phone, apiKey, appID, webhookURL, body.Credentials, body.AutoReply); err != nil {
 		s.logger.Sugar().Errorw("saveWAConfig", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return

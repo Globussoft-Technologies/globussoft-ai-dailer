@@ -45,6 +45,21 @@ func (s *Server) createScheduledCall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// DND guard: refuse to schedule a call to a number on the org's DND list.
+	// The dial-time worker also checks DND (dial/initiator.go), but blocking
+	// here surfaces the reason to the user immediately instead of letting it
+	// fail silently at dial time with a generic "failed" status.
+	lead, leadErr := s.db.GetLeadByID(body.LeadID)
+	if leadErr != nil || lead == nil {
+		writeError(w, http.StatusBadRequest, "lead not found")
+		return
+	}
+	if isDND, dndErr := s.db.IsDNDNumber(ac.OrgID, lead.Phone); dndErr == nil && isDND {
+		writeError(w, http.StatusConflict,
+			"This number is on the DND list. Remove it from DND before scheduling.")
+		return
+	}
+
 	id, err := s.db.CreateScheduledCall(ac.OrgID, body.LeadID, body.CampaignID, scheduledAt, body.Notes)
 	if err != nil {
 		s.logger.Sugar().Errorw("createScheduledCall", "err", err)

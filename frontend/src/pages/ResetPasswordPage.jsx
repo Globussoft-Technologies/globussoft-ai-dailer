@@ -17,8 +17,8 @@ export default function ResetPasswordPage() {
     e.preventDefault();
     setError(''); setSuccess('');
 
-    if (newPassword.length < 6) {
-      setError('Password must be at least 6 characters');
+    if (newPassword.length < 8) {
+      setError('Password must be at least 8 characters.');
       return;
     }
     if (newPassword !== confirmPassword) {
@@ -83,12 +83,12 @@ export default function ResetPasswordPage() {
               <form onSubmit={handleSubmit}>
                 <div className="form-group">
                   <label>New Password</label>
-                  <input className="form-input" type="password" placeholder="Enter new password" required minLength={6}
+                  <input className="form-input" type="password" placeholder="Enter new password" required minLength={8} maxLength={128}
                     value={newPassword} onChange={e => setNewPassword(e.target.value)} />
                 </div>
                 <div className="form-group">
                   <label>Confirm Password</label>
-                  <input className="form-input" type="password" placeholder="Confirm new password" required minLength={6}
+                  <input className="form-input" type="password" placeholder="Confirm new password" required minLength={8} maxLength={128}
                     value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} />
                 </div>
                 <button type="submit" className="btn-primary" disabled={loading}

@@ -518,9 +518,13 @@ export default function CampaignsTab({
                       }}>
                         {campaign.channel === 'whatsapp' ? '💬 WhatsApp' : '📞 Voice'}
                       </span>
-                      {campaign.product_id && (
+                      {campaign.product_id > 0 ? (
                         <span style={{ background: 'rgba(6,182,212,0.2)', color: '#22d3ee', fontSize: '0.7rem', padding: '2px 8px', borderRadius: '10px', fontWeight: 600 }}>
                           {getProductName(campaign.product_id)}
+                        </span>
+                      ) : (
+                        <span style={{ background: 'rgba(234,179,8,0.15)', color: '#fbbf24', fontSize: '0.7rem', padding: '2px 8px', borderRadius: '10px', fontWeight: 600 }}>
+                          ⚠ No product
                         </span>
                       )}
                       {statusBadge(campaign.status || 'active')}
@@ -599,6 +603,7 @@ export default function CampaignsTab({
         handleCreateCampaign={handleCreateCampaign}
         loading={loading}
         createError={createError}
+        setCreateError={setCreateError}
         orgProducts={orgProducts}
         selectedTemplate={selectedTemplate}
         setSelectedTemplate={setSelectedTemplate}

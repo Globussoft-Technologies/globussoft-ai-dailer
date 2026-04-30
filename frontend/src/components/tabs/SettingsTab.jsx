@@ -5,6 +5,7 @@ export default function SettingsTab({
   handleAddPronunciation, pronFormData, setPronFormData, pronunciations, handleDeletePronunciation,
   selectedOrg, orgs, showProductInput, setShowProductInput, newProductName, setNewProductName,
   handleAddProduct, orgProducts, handleDeleteProduct, handleSaveProduct, scraping, handleScrapeProduct,
+  scrapeStatus,
   addingProduct, productAddError,
   promptDirty, handleSaveSystemPrompt, promptSaving, promptSaveStatus,
   systemPromptAuto, systemPromptCustom,
@@ -53,6 +54,7 @@ export default function SettingsTab({
 
   const handleGenerateProductPrompt = async (productId) => {
     updateProductPrompt(productId, 'generating', true);
+    updateProductPrompt(productId, 'promptStatus', null);
     try {
       const res = await apiFetch(`${API_URL}/products/${productId}/generate-prompt`, {
         method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -62,42 +64,56 @@ export default function SettingsTab({
         })
       });
       const data = await res.json();
-      if (data.prompt) {
+      if (res.ok && data.prompt) {
         setSystemPromptCustom(data.prompt);
         setPromptDirty(true);
-        alert('System prompt generated from product persona! Review below and click Save.');
+        updateProductPrompt(productId, 'promptStatus',
+          { kind: 'success', text: 'System prompt generated. Review below and click Save.' });
       } else {
-        alert(data.message || 'Generation failed');
+        updateProductPrompt(productId, 'promptStatus',
+          { kind: 'error', text: data.message || data.error || 'Generation failed. Add a persona and call flow first.' });
       }
-    } catch(e) { alert('Failed to generate'); }
+    } catch (e) {
+      updateProductPrompt(productId, 'promptStatus',
+        { kind: 'error', text: 'Failed to generate. Please try again.' });
+    }
     updateProductPrompt(productId, 'generating', false);
+    setTimeout(() => updateProductPrompt(productId, 'promptStatus', null), 5000);
   };
 
   const handleGeneratePersona = async (productId) => {
     updateProductPrompt(productId, 'generatingPersona', true);
+    updateProductPrompt(productId, 'personaStatus', null);
     try {
       const res = await apiFetch(`${API_URL}/products/${productId}/generate-persona`, {
         method: 'POST', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({})
       });
       const data = await res.json();
-      if (data.status === 'success') {
+      if (res.ok && data.status === 'success') {
         updateProductPrompt(productId, 'agent_persona', data.agent_persona);
         updateProductPrompt(productId, 'call_flow_instructions', data.call_flow_instructions);
-        // Auto-save immediately after generation
         await apiFetch(`${API_URL}/products/${productId}/prompt`, {
           method: 'PUT', headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({ agent_persona: data.agent_persona, call_flow_instructions: data.call_flow_instructions })
         });
+        updateProductPrompt(productId, 'personaStatus',
+          { kind: 'success', text: 'Persona & call flow generated and saved.' });
       } else {
-        alert(data.message || 'Generation failed');
+        updateProductPrompt(productId, 'personaStatus',
+          { kind: 'error', text: data.message || data.error || 'Generation failed. Make sure the website has been scraped first.' });
       }
-    } catch(e) { alert('Failed to generate persona'); }
+    } catch (e) {
+      updateProductPrompt(productId, 'personaStatus',
+        { kind: 'error', text: 'Failed to generate persona. Please try again.' });
+    }
     updateProductPrompt(productId, 'generatingPersona', false);
+    setTimeout(() => updateProductPrompt(productId, 'personaStatus', null), 5000);
   };
 
   const handleSaveProductPrompt = async (productId) => {
     updateProductPrompt(productId, 'saving', true);
+    updateProductPrompt(productId, 'promptStatus', null);
     try {
       const pp = productPrompts[productId];
       const res = await apiFetch(`${API_URL}/products/${productId}/prompt`, {
@@ -111,9 +127,12 @@ export default function SettingsTab({
         const err = await res.text();
         throw new Error(err || `HTTP ${res.status}`);
       }
-      alert('Persona & call flow saved!');
-    } catch(e) { alert('Failed to save: ' + (e.message || e)); }
+      updateProductPrompt(productId, 'promptStatus', { kind: 'success', text: 'Persona & call flow saved.' });
+    } catch (e) {
+      updateProductPrompt(productId, 'promptStatus', { kind: 'error', text: 'Failed to save: ' + (e.message || e) });
+    }
     updateProductPrompt(productId, 'saving', false);
+    setTimeout(() => updateProductPrompt(productId, 'promptStatus', null), 4000);
   };
 
   return (
@@ -287,18 +306,32 @@ export default function SettingsTab({
                       onClick={() => handleDeleteProduct(p.id)}>🗑️ Remove</button>
                   </div>
 
-                  <div style={{display: 'flex', gap: '10px', marginBottom: '1rem', alignItems: 'flex-end'}}>
+                  <div style={{display: 'flex', gap: '10px', marginBottom: '0.5rem', alignItems: 'flex-end'}}>
                     <div className="form-group" style={{marginBottom: 0, flex: 1}}>
                       <label>Website URL</label>
                       <input className="form-input" placeholder="https://..." defaultValue={p.website_url}
                         onBlur={e => handleSaveProduct(p.id, { website_url: e.target.value })} />
                     </div>
                     <button className="btn-primary" style={{height: '42px', padding: '0 16px', whiteSpace: 'nowrap',
-                      background: scraping === p.id ? '#475569' : 'linear-gradient(135deg, #06b6d4, #0891b2)', fontSize: '0.85rem'}}
+                      background: scraping === p.id ? '#475569' : 'linear-gradient(135deg, #06b6d4, #0891b2)',
+                      fontSize: '0.85rem', cursor: scraping === p.id ? 'not-allowed' : 'pointer',
+                      opacity: scraping === p.id ? 0.85 : 1}}
                       onClick={() => handleScrapeProduct(p.id)} disabled={scraping === p.id}>
-                      {scraping === p.id ? '⏳ Analyzing...' : (p.website_url ? '🔍 Scrape Website' : '🧠 AI Research')}
+                      {scraping === p.id ? (
+                        <><span className="btn-spinner" />Analyzing...</>
+                      ) : (p.website_url ? '🔍 Scrape Website' : '🧠 AI Research')}
                     </button>
                   </div>
+                  {scrapeStatus && scrapeStatus.id === p.id && scrapeStatus.kind && scrapeStatus.kind !== 'pending' && (
+                    <div style={{
+                      marginBottom: '0.75rem', padding: '8px 12px', borderRadius: '6px', fontSize: '0.8rem',
+                      background: scrapeStatus.kind === 'success' ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)',
+                      border: `1px solid ${scrapeStatus.kind === 'success' ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'}`,
+                      color: scrapeStatus.kind === 'success' ? '#22c55e' : '#ef4444'
+                    }}>
+                      {scrapeStatus.kind === 'success' ? '✅ ' : '⚠️ '}{scrapeStatus.text}
+                    </div>
+                  )}
 
                   {/* Collapsible: All product details */}
                   <div style={{marginTop: '0.5rem'}}>
@@ -346,11 +379,26 @@ export default function SettingsTab({
                           {(p.scraped_info || p.manual_notes) && (
                             <div style={{marginBottom: '1rem'}}>
                               <button className="btn-primary"
-                                style={{background: 'linear-gradient(135deg, #818cf8, #6366f1)', fontSize: '0.85rem', padding: '8px 16px', width: '100%'}}
+                                style={{background: 'linear-gradient(135deg, #818cf8, #6366f1)', fontSize: '0.85rem',
+                                  padding: '8px 16px', width: '100%',
+                                  cursor: pp.generatingPersona ? 'not-allowed' : 'pointer',
+                                  opacity: pp.generatingPersona ? 0.85 : 1}}
                                 disabled={pp.generatingPersona}
                                 onClick={() => handleGeneratePersona(p.id)}>
-                                {pp.generatingPersona ? '⏳ Generating from website info...' : '✨ Auto-Generate Persona & Call Flow from Website'}
+                                {pp.generatingPersona
+                                  ? <><span className="btn-spinner" />Generating from website info...</>
+                                  : '✨ Auto-Generate Persona & Call Flow from Website'}
                               </button>
+                              {pp.personaStatus && pp.personaStatus.kind && (
+                                <div style={{
+                                  marginTop: '8px', padding: '8px 12px', borderRadius: '6px', fontSize: '0.8rem',
+                                  background: pp.personaStatus.kind === 'success' ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)',
+                                  border: `1px solid ${pp.personaStatus.kind === 'success' ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'}`,
+                                  color: pp.personaStatus.kind === 'success' ? '#22c55e' : '#ef4444'
+                                }}>
+                                  {pp.personaStatus.kind === 'success' ? '✅ ' : '⚠️ '}{pp.personaStatus.text}
+                                </div>
+                              )}
                             </div>
                           )}
 
@@ -376,18 +424,30 @@ export default function SettingsTab({
 
                           <div style={{display: 'flex', gap: '10px'}}>
                             <button className="btn-primary"
-                              style={{background: 'linear-gradient(135deg, #f59e0b, #d97706)', fontSize: '0.85rem', padding: '8px 16px'}}
+                              style={{background: 'linear-gradient(135deg, #f59e0b, #d97706)', fontSize: '0.85rem', padding: '8px 16px',
+                                cursor: pp.generating ? 'not-allowed' : 'pointer', opacity: pp.generating ? 0.85 : 1}}
                               disabled={pp.generating}
                               onClick={() => handleGenerateProductPrompt(p.id)}>
-                              {pp.generating ? '⏳ Generating...' : '🤖 Generate Prompt'}
+                              {pp.generating ? <><span className="btn-spinner" />Generating...</> : '🤖 Generate Prompt'}
                             </button>
                             <button className="btn-primary"
-                              style={{background: 'linear-gradient(135deg, #10b981, #059669)', fontSize: '0.85rem', padding: '8px 16px'}}
+                              style={{background: 'linear-gradient(135deg, #10b981, #059669)', fontSize: '0.85rem', padding: '8px 16px',
+                                cursor: pp.saving ? 'not-allowed' : 'pointer', opacity: pp.saving ? 0.85 : 1}}
                               disabled={pp.saving}
                               onClick={() => handleSaveProductPrompt(p.id)}>
-                              {pp.saving ? '⏳ Saving...' : '💾 Save Persona & Flow'}
+                              {pp.saving ? <><span className="btn-spinner" />Saving...</> : '💾 Save Persona & Flow'}
                             </button>
                           </div>
+                          {pp.promptStatus && pp.promptStatus.kind && (
+                            <div style={{
+                              marginTop: '8px', padding: '8px 12px', borderRadius: '6px', fontSize: '0.8rem',
+                              background: pp.promptStatus.kind === 'success' ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)',
+                              border: `1px solid ${pp.promptStatus.kind === 'success' ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'}`,
+                              color: pp.promptStatus.kind === 'success' ? '#22c55e' : '#ef4444'
+                            }}>
+                              {pp.promptStatus.kind === 'success' ? '✅ ' : '⚠️ '}{pp.promptStatus.text}
+                            </div>
+                          )}
                         </div>
                       </div>
                     )}

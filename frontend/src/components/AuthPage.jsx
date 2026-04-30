@@ -144,7 +144,7 @@ export default function AuthPage() {
                 </div>
                 <div className="form-group">
                   <label>Password</label>
-                  <input data-testid="auth-password" className="form-input" type="password" placeholder="••••••••" required minLength={6}
+                  <input data-testid="auth-password" className="form-input" type="password" placeholder="••••••••" required minLength={8} maxLength={128}
                     value={authForm.password} onChange={e => setAuthForm({ ...authForm, password: e.target.value })} />
                 </div>
                 <button data-testid="auth-submit" type="submit" className="btn-primary" disabled={authLoading}

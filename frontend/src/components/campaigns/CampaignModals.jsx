@@ -22,10 +22,15 @@ export default function CampaignModals({
   showEditCampaignModal, setShowEditCampaignModal,
   editCampaignForm, setEditCampaignForm,
   handleSaveEditCampaign,
+  setCreateError,
 }) {
   const [nameTouched, setNameTouched] = useState(false);
   const nameError = validateCampaignName(createForm.name);
   const showNameError = nameTouched && !!nameError;
+
+  const [editNameTouched, setEditNameTouched] = useState(false);
+  const editNameError = validateCampaignName(editCampaignForm?.name);
+  const showEditNameError = editNameTouched && !!editNameError;
 
   // Render-time dedupe: when the products table has duplicate (org_id, name)
   // rows from before the API uniqueness check landed, the dropdown shows
@@ -47,6 +52,8 @@ export default function CampaignModals({
     setNameTouched(false);
     setShowCreateModal(false);
     if (setSelectedTemplate) setSelectedTemplate(null);
+    if (setCreateForm) setCreateForm({ name: '', product_id: '', lead_source: '', channel: 'voice' });
+    if (setCreateError) setCreateError('');
   };
 
   return (
@@ -253,29 +260,30 @@ export default function CampaignModals({
 
       {/* Edit Campaign Modal */}
       {showEditCampaignModal && (
-        <div className="modal-overlay" onClick={() => setShowEditCampaignModal(false)}>
+        <div className="modal-overlay" onClick={() => { setEditNameTouched(false); setShowEditCampaignModal(false); }}>
           <div className="glass-panel" onClick={e => e.stopPropagation()}
             style={{maxWidth: '450px', width: '90%'}}>
             <h3 style={{marginTop: 0, color: '#e2e8f0'}}>Edit Campaign</h3>
-            {(() => {
-              const editNameError = validateCampaignName(editCampaignForm.name);
-              return (
             <form onSubmit={e => {
+              setEditNameTouched(true);
               if (editNameError) { e.preventDefault(); return; }
               handleSaveEditCampaign(e);
             }}>
               <div style={{marginBottom: '1rem'}}>
-                <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>Campaign Name</label>
+                <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>
+                  Campaign Name <span style={{color: '#ef4444'}}>*</span>
+                </label>
                 <input className="form-input" placeholder="e.g. AdsGPT March Campaign"
                   value={editCampaignForm.name}
                   maxLength={CAMPAIGN_NAME_MAX_LEN}
-                  onChange={e => setEditCampaignForm({...editCampaignForm, name: e.target.value})}
+                  onChange={e => { setEditNameTouched(true); setEditCampaignForm({...editCampaignForm, name: e.target.value}); }}
+                  onBlur={() => setEditNameTouched(true)}
                   style={{
                     width: '100%',
-                    borderColor: editNameError ? 'rgba(239,68,68,0.6)' : undefined,
-                    boxShadow: editNameError ? '0 0 0 3px rgba(239,68,68,0.15)' : undefined,
+                    borderColor: showEditNameError ? 'rgba(239,68,68,0.6)' : undefined,
+                    boxShadow: showEditNameError ? '0 0 0 3px rgba(239,68,68,0.15)' : undefined,
                   }} />
-                {editNameError && (
+                {showEditNameError && (
                   <p style={{margin: '4px 0 0', fontSize: '0.78rem', color: '#f87171'}}>{editNameError}</p>
                 )}
               </div>
@@ -313,17 +321,15 @@ export default function CampaignModals({
                 </select>
               </div>
               <div style={{display: 'flex', gap: '10px', justifyContent: 'flex-end'}}>
-                <button type="button" onClick={() => setShowEditCampaignModal(false)}
+                <button type="button" onClick={() => { setEditNameTouched(false); setShowEditCampaignModal(false); }}
                   style={{background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: '#94a3b8', padding: '8px 16px', borderRadius: '8px', cursor: 'pointer'}}>
                   Cancel
                 </button>
-                <button type="submit" className="btn-primary" disabled={loading || !!editNameError}>
+                <button type="submit" className="btn-primary" disabled={loading}>
                   {loading ? 'Saving...' : 'Save Changes'}
                 </button>
               </div>
             </form>
-              );
-            })()}
           </div>
         </div>
       )}

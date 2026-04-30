@@ -101,7 +101,9 @@ export default function AnalyticsPage({ apiFetch, API_URL }) {
           <div style={{display: 'flex', alignItems: 'flex-end', gap: '8px', height: '160px'}}>
             {dailyCalls.map((d, i) => {
               const pct = Math.max(4, (d.count / maxDaily) * 100);
-              const dayLabel = new Date(d.date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short' });
+              const dt = new Date(d.date + 'T12:00:00');
+              const weekday = dt.toLocaleDateString('en-US', { weekday: 'short' });
+              const monthDay = dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
               return (
                 <div key={i} style={{flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%', justifyContent: 'flex-end'}}>
                   <span style={{fontSize: '0.75rem', color: '#e2e8f0', marginBottom: '4px'}}>{d.count}</span>
@@ -113,7 +115,8 @@ export default function AnalyticsPage({ apiFetch, API_URL }) {
                     borderRadius: '4px 4px 0 0',
                     transition: 'height 0.3s ease',
                   }} />
-                  <span style={{fontSize: '0.7rem', color: '#64748b', marginTop: '6px'}}>{dayLabel}</span>
+                  <span style={{fontSize: '0.7rem', color: '#94a3b8', marginTop: '6px', fontWeight: 600}}>{monthDay}</span>
+                  <span style={{fontSize: '0.65rem', color: '#64748b'}}>{weekday}</span>
                 </div>
               );
             })}

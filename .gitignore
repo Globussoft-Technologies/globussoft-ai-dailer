@@ -75,3 +75,5 @@ deploy.tar.gz
 DEPLOYMENT.md
 server-missing-files.md
 # PLAN-crm-integration.md
+# Compiled Go binaries (built locally and on testgo, not source)
+backend/bin/

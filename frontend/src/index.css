@@ -220,6 +220,13 @@ body {
   from { transform: translateY(30px) scale(0.95); opacity: 0; }
   to { transform: translateY(0) scale(1); opacity: 1; }
 }
+@keyframes spin { to { transform: rotate(360deg); } }
+.btn-spinner {
+  display: inline-block; width: 12px; height: 12px;
+  border: 2px solid rgba(255,255,255,0.3); border-top-color: #fff;
+  border-radius: 50%; animation: spin 0.7s linear infinite;
+  vertical-align: middle; margin-right: 6px;
+}
 
 /* Call-log audio player — themed to match the dark surface. The native
    <audio> element renders a chrome-grey pill by default which clashes with

@@ -1,0 +1,526 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Callified WebSocket Demo</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<!--
+  Single-file reference implementation for integrating with the Callified
+  audio + transcript WebSocket. Open this file directly in a browser
+  (file://) or serve it from any static host — there's no build step.
+
+  What this demo covers, end to end:
+
+    1.  Open a WebSocket to /media-stream with browser-side query params
+        (name, phone, campaign_id, tts_*).
+    2.  Send the {connected} + {start} handshake the server expects.
+    3.  Render incoming text frames:
+          {"type":"transcript","role":"agent|user","text":"…"}
+        as a chat log.
+    4.  Decode incoming audio frames:
+          {"event":"media","media":{"payload":"<base64 PCM16 8kHz>"}}
+        and play them in real time through the speakers.
+    5.  Capture mic audio via AudioContext, downsample to 8 kHz PCM16,
+        base64 it, and send as {event:"media", media:{payload:…}} frames.
+    6.  Subscribe to /api/campaign-events SSE (using the new ?ticket= flow,
+        not ?token=) and render DIALING / CONNECTED / COMPLETED labels.
+    7.  Send a clean {event:"stop"} on disconnect so the server runs
+        finalizeCall (saves WAV, inserts transcript row, emits COMPLETED).
+
+  This file is intentionally vanilla JS — no React/Vue/build pipeline —
+  so the patterns translate directly into whatever stack your frontend
+  team uses. Search for the comment markers (// 1, // 2, … // 7) to find
+  each step.
+-->
+<style>
+  :root {
+    --bg: #0f172a;
+    --panel: #1e293b;
+    --border: #334155;
+    --text: #e2e8f0;
+    --muted: #94a3b8;
+    --accent: #22d3ee;
+    --green: #22c55e;
+    --red: #ef4444;
+    --orange: #f59e0b;
+    --purple: #a78bfa;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    margin: 0;
+    padding: 16px;
+    line-height: 1.45;
+  }
+  h1 { margin: 0 0 12px; font-size: 1.4rem; }
+  h3 { margin: 12px 0 6px; font-size: 0.95rem; color: var(--accent); }
+  .grid {
+    display: grid;
+    grid-template-columns: 380px 1fr;
+    gap: 16px;
+    max-width: 1280px;
+    margin: 0 auto;
+  }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px;
+  }
+  label { display: block; font-size: 0.78rem; color: var(--muted); margin: 8px 0 3px; }
+  input, button, select, textarea {
+    background: #0f172a;
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 7px 10px;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    font-family: inherit;
+    width: 100%;
+  }
+  button {
+    cursor: pointer;
+    font-weight: 600;
+    background: var(--accent);
+    color: #0f172a;
+    border: none;
+  }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  button.danger { background: var(--red); color: #fff; }
+  button.muted { background: #334155; color: var(--text); }
+  .row { display: flex; gap: 8px; margin-top: 6px; }
+  .pill {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .pill.idle { background: #334155; color: var(--muted); }
+  .pill.connecting { background: rgba(245,158,11,0.2); color: var(--orange); }
+  .pill.connected { background: rgba(34,197,94,0.2); color: var(--green); }
+  .pill.error { background: rgba(239,68,68,0.2); color: var(--red); }
+  .log {
+    background: #0b1224;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px;
+    height: 220px;
+    overflow-y: auto;
+    font-size: 0.78rem;
+    font-family: "JetBrains Mono", "Fira Code", monospace;
+    white-space: pre-wrap;
+  }
+  .log .agent  { color: #22d3ee; }
+  .log .user   { color: #a78bfa; }
+  .log .system { color: var(--muted); }
+  .log .err    { color: var(--red); }
+  .log .raw    { color: #475569; font-size: 0.7rem; }
+  .chat {
+    background: #0b1224;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px;
+    height: 360px;
+    overflow-y: auto;
+  }
+  .turn { padding: 8px 10px; margin-bottom: 6px; border-radius: 6px; max-width: 85%; }
+  .turn.agent { background: rgba(34,211,238,0.1); border-left: 3px solid var(--accent); }
+  .turn.user  { background: rgba(167,139,250,0.1); border-left: 3px solid var(--purple); margin-left: auto; }
+  .turn .role { font-size: 0.7rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 2px; }
+  .turn .text { font-size: 0.9rem; }
+  .events {
+    background: #0b1224;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px;
+    height: 130px;
+    overflow-y: auto;
+    font-size: 0.78rem;
+    font-family: "JetBrains Mono", "Fira Code", monospace;
+  }
+  .stats { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 8px; }
+  .stat  { background: #0b1224; border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; font-size: 0.75rem; }
+  .stat strong { color: var(--accent); font-size: 0.95rem; display: block; }
+</style>
+</head>
+
+<body>
+<div class="grid">
+  <!-- ─── LEFT: configuration + controls ─────────────────────────────────── -->
+  <div class="panel">
+    <h1>📞 Callified WS Demo</h1>
+    <div>Status: <span id="status" class="pill idle">disconnected</span></div>
+
+    <h3>1. Server</h3>
+    <label>Base URL</label>
+    <input id="baseUrl" value="https://testgo.callified.ai" />
+    <label>Auth token (Bearer) — used for SSE only</label>
+    <input id="authToken" placeholder="eyJhbGc…" />
+
+    <h3>2. Lead identity (sent as WS query params)</h3>
+    <label>Lead name</label>
+    <input id="leadName" value="Demo User" />
+    <label>Lead phone (10 digits)</label>
+    <input id="leadPhone" value="9999900099" />
+    <label>Lead ID (DB id, optional)</label>
+    <input id="leadId" value="" />
+    <label>Campaign ID (required for live-feed events)</label>
+    <input id="campaignId" value="940" />
+
+    <h3>3. Voice config</h3>
+    <label>TTS provider</label>
+    <select id="ttsProvider">
+      <option value="smallest">smallest</option>
+      <option value="sarvam">sarvam</option>
+      <option value="elevenlabs">elevenlabs</option>
+    </select>
+    <label>Voice ID (controls the agent's name — empty falls back to "Arjun")</label>
+    <input id="ttsVoiceId" value="aditya" placeholder="aditya, raj, kabir, meera, or an ElevenLabs hash" />
+    <label>Language</label>
+    <select id="ttsLanguage">
+      <option value="en">English (en)</option>
+      <option value="hi">Hindi (hi)</option>
+      <option value="te">Telugu (te)</option>
+      <option value="bn">Bengali (bn)</option>
+      <option value="ta">Tamil (ta)</option>
+      <option value="mr">Marathi (mr)</option>
+      <option value="kn">Kannada (kn)</option>
+      <option value="gu">Gujarati (gu)</option>
+    </select>
+
+    <h3>4. Controls</h3>
+    <div class="row">
+      <button id="btnConnect">▶ Connect &amp; talk</button>
+      <button id="btnDisconnect" class="danger" disabled>■ Hang up</button>
+    </div>
+
+    <div class="stats">
+      <div class="stat">Frames in <strong id="statIn">0</strong></div>
+      <div class="stat">Frames out <strong id="statOut">0</strong></div>
+      <div class="stat">Audio sec <strong id="statAudio">0.0</strong></div>
+    </div>
+  </div>
+
+  <!-- ─── RIGHT: live conversation + live-feed + raw frames ──────────────── -->
+  <div class="panel">
+    <h3>💬 Conversation (transcripts in real time)</h3>
+    <div id="chat" class="chat">
+      <div class="turn agent" style="opacity:0.5">
+        <div class="role">demo</div>
+        <div class="text">Connect on the left, then speak. The AI’s text appears here as it speaks; your STT transcript appears too.</div>
+      </div>
+    </div>
+
+    <h3>📡 Live campaign feed (SSE)</h3>
+    <div id="events" class="events">(idle — connecting will subscribe to /api/campaign-events)</div>
+
+    <h3>🔍 Raw WS frames</h3>
+    <div id="log" class="log"></div>
+  </div>
+</div>
+
+<script>
+// ─── STATE ──────────────────────────────────────────────────────────────────
+let ws = null;            // WebSocket
+let audioCtx = null;      // playback + capture share one AudioContext
+let micStream = null;     // MediaStream from getUserMedia
+let micProcessor = null;  // ScriptProcessorNode capturing mic
+let sseSource = null;     // EventSource for live-feed
+let nextPlayTime = 0;     // schedule for back-to-back TTS chunk playback
+let micMuted = true;      // muted while AI is speaking (echo prevention)
+let unmuteTimer = null;
+let streamSid = '';
+let stats = { in: 0, out: 0, audioBytes: 0 };
+
+// ─── HELPERS ────────────────────────────────────────────────────────────────
+const $ = (id) => document.getElementById(id);
+const setStatus = (label, cls) => {
+  const el = $('status');
+  el.textContent = label;
+  el.className = 'pill ' + cls;
+};
+const logRaw = (dir, msg, klass = 'raw') => {
+  const line = document.createElement('div');
+  line.className = klass;
+  const txt = typeof msg === 'string' ? msg : JSON.stringify(msg);
+  // Truncate giant audio payloads so the log doesn't fill with base64.
+  line.textContent = `${dir} ${txt.slice(0, 240)}${txt.length > 240 ? '…' : ''}`;
+  $('log').appendChild(line);
+  $('log').scrollTop = $('log').scrollHeight;
+};
+const addTurn = (role, text) => {
+  const div = document.createElement('div');
+  div.className = 'turn ' + role;
+  div.innerHTML = `<div class="role">${role}</div><div class="text"></div>`;
+  div.querySelector('.text').textContent = text;
+  $('chat').appendChild(div);
+  $('chat').scrollTop = $('chat').scrollHeight;
+};
+const updateStats = () => {
+  $('statIn').textContent = stats.in;
+  $('statOut').textContent = stats.out;
+  $('statAudio').textContent = (stats.audioBytes / 16000).toFixed(1); // 8kHz × 2 bytes
+};
+
+// Convert a Uint8Array of base64-encoded PCM16 (little-endian, 8 kHz) into
+// a Float32Array suitable for an AudioBuffer.
+const decodePCM16Base64 = (b64) => {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  const view = new DataView(bytes.buffer);
+  const samples = bytes.length / 2;
+  const out = new Float32Array(samples);
+  for (let i = 0; i < samples; i++) {
+    out[i] = view.getInt16(i * 2, true) / 0x8000;
+  }
+  return out;
+};
+
+// Convert a Float32Array (mic samples in [-1, 1]) into base64-encoded PCM16
+// and naively downsample 48k → 8k by picking every Nth sample.
+const encodeMicPCM16Base64 = (float32, sampleRate) => {
+  const ratio = sampleRate / 8000;
+  const targetLen = Math.floor(float32.length / ratio);
+  const buf = new ArrayBuffer(targetLen * 2);
+  const view = new DataView(buf);
+  for (let i = 0; i < targetLen; i++) {
+    let s = float32[Math.floor(i * ratio)];
+    s = Math.max(-1, Math.min(1, s));
+    view.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+  }
+  // ArrayBuffer → base64 without the FileReader dance.
+  let bin = '';
+  const bytes = new Uint8Array(buf);
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin);
+};
+
+// ─── 1. CONNECT ─────────────────────────────────────────────────────────────
+async function connect() {
+  if (ws) return;
+  const baseUrl = $('baseUrl').value.trim();
+  const wsBase = baseUrl.replace(/^http/, 'ws');
+  const qp = new URLSearchParams({
+    name:         $('leadName').value,
+    phone:        $('leadPhone').value,
+    lead_id:      $('leadId').value,
+    campaign_id:  $('campaignId').value,
+    tts_provider: $('ttsProvider').value,
+    tts_language: $('ttsLanguage').value,
+    // voice= controls TTS playback identity AND the agent's persona name.
+    // Empty string = backend falls back to "Arjun"; "aditya" = the AI says
+    // "I'm Aditya". Match the campaign's saved voice_id for production-like
+    // behaviour. (See backend/internal/prompt/builder.go:agentIdentity.)
+    voice:        $('ttsVoiceId').value,
+  });
+  const wsUrl = `${wsBase}/media-stream?${qp.toString()}`;
+
+  setStatus('connecting…', 'connecting');
+  logRaw('→ dialing', wsUrl, 'system');
+
+  try {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 48000 });
+    nextPlayTime = audioCtx.currentTime;
+    micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (e) {
+    logRaw('✗ mic', e.message, 'err');
+    setStatus('mic denied', 'error');
+    return;
+  }
+
+  ws = new WebSocket(wsUrl);
+  ws.binaryType = 'arraybuffer';
+
+  ws.onopen = () => {
+    setStatus('connected', 'connected');
+    streamSid = `web_demo_${Date.now()}`;
+
+    // ── 2. handshake ──
+    sendJSON({ event: 'connected' });
+    sendJSON({
+      event: 'start',
+      stream_sid: streamSid,
+      start: { streamSid: streamSid },
+    });
+
+    // ── 5. start mic streaming ──
+    startMicStreaming();
+
+    // ── 6. subscribe to the live-feed (separate from the WS) ──
+    subscribeToLiveFeed();
+  };
+
+  // ── 3 + 4. handle incoming frames (transcripts AND audio) ──
+  ws.onmessage = (ev) => {
+    stats.in++;
+    let frame = null;
+    try { frame = JSON.parse(ev.data); } catch (_) {}
+    if (!frame) {
+      logRaw('←', '<binary or non-json>');
+      updateStats();
+      return;
+    }
+
+    // Transcript frames — just text, no audio.
+    if (frame.type === 'transcript' && frame.text) {
+      addTurn(frame.role || 'agent', frame.text);
+      logRaw('← transcript', `[${frame.role}] ${frame.text}`);
+      updateStats();
+      return;
+    }
+
+    // Media frames — base64 audio chunks. Decode and schedule playback.
+    if (frame.event === 'media' && frame.media && frame.media.payload) {
+      const pcm = decodePCM16Base64(frame.media.payload);
+      stats.audioBytes += pcm.length * 2;
+      // Echo guard: mute the mic while the AI is speaking so the user's mic
+      // doesn't pick up the speakers.
+      micMuted = true;
+      if (unmuteTimer) clearTimeout(unmuteTimer);
+
+      // Resample 8 kHz → 48 kHz by linear interpolation; cheap and good
+      // enough for browser playback. Production should use OfflineAudioContext.
+      const resampled = new Float32Array(pcm.length * 6);
+      for (let i = 0; i < resampled.length; i++) resampled[i] = pcm[Math.floor(i / 6)];
+      const buf = audioCtx.createBuffer(1, resampled.length, 48000);
+      buf.getChannelData(0).set(resampled);
+
+      const src = audioCtx.createBufferSource();
+      src.buffer = buf;
+      src.connect(audioCtx.destination);
+      if (audioCtx.currentTime > nextPlayTime) nextPlayTime = audioCtx.currentTime;
+      src.start(nextPlayTime);
+      nextPlayTime += buf.duration;
+
+      // Unmute the mic 500ms after the last TTS chunk finishes.
+      const remaining = Math.max(0, (nextPlayTime - audioCtx.currentTime) * 1000) + 500;
+      unmuteTimer = setTimeout(() => { micMuted = false; }, remaining);
+
+      logRaw('← media', `${frame.media.payload.length}b64 (≈${pcm.length} samples)`);
+      updateStats();
+      return;
+    }
+
+    // Barge-in: server tells us to discard buffered TTS.
+    if (frame.event === 'clear') {
+      nextPlayTime = audioCtx.currentTime;
+      micMuted = false;
+      logRaw('← clear', 'barge-in detected');
+      updateStats();
+      return;
+    }
+
+    // Anything else — log raw so dev can see it during integration.
+    logRaw('←', frame);
+    updateStats();
+  };
+
+  ws.onerror = (e) => {
+    logRaw('✗ ws', e.message || 'socket error', 'err');
+    setStatus('error', 'error');
+  };
+
+  ws.onclose = () => {
+    cleanup();
+    setStatus('disconnected', 'idle');
+  };
+
+  $('btnConnect').disabled = true;
+  $('btnDisconnect').disabled = false;
+}
+
+// ─── 5. MIC CAPTURE ─────────────────────────────────────────────────────────
+function startMicStreaming() {
+  const source = audioCtx.createMediaStreamSource(micStream);
+  // ScriptProcessor is deprecated but works everywhere; AudioWorklet is the
+  // modern path — both produce the same Float32 buffer so the encode logic
+  // is identical.
+  micProcessor = audioCtx.createScriptProcessor(2048, 1, 1);
+  source.connect(micProcessor);
+  micProcessor.connect(audioCtx.destination);
+
+  micProcessor.onaudioprocess = (e) => {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (micMuted) return;
+    const samples = e.inputBuffer.getChannelData(0);
+    const payload = encodeMicPCM16Base64(samples, audioCtx.sampleRate);
+    sendJSON({ event: 'media', media: { payload } });
+  };
+}
+
+// ─── 7. CLEAN DISCONNECT ────────────────────────────────────────────────────
+function disconnect() {
+  if (!ws) return;
+  try { sendJSON({ event: 'stop', stream_sid: streamSid }); } catch (_) {}
+  ws.close();
+}
+
+function cleanup() {
+  if (micProcessor) { micProcessor.disconnect(); micProcessor.onaudioprocess = null; micProcessor = null; }
+  if (micStream)   { micStream.getTracks().forEach((t) => t.stop()); micStream = null; }
+  if (audioCtx)    { audioCtx.close(); audioCtx = null; }
+  if (sseSource)   { sseSource.close(); sseSource = null; }
+  ws = null;
+  $('btnConnect').disabled = false;
+  $('btnDisconnect').disabled = true;
+}
+
+function sendJSON(obj) {
+  ws.send(JSON.stringify(obj));
+  stats.out++;
+  // Don't log mic media frames — they fire 20× a second and would flood the UI.
+  if (obj.event !== 'media') logRaw('→', obj);
+  updateStats();
+}
+
+// ─── 6. LIVE FEED (SSE) ─────────────────────────────────────────────────────
+//
+// Two-step auth: the long-lived bearer token can't go on EventSource because
+// EventSource has no header API and ?token= would log it everywhere. So we
+// trade the bearer for a 60-second ?ticket= via /api/sse/ticket.
+async function subscribeToLiveFeed() {
+  const token = $('authToken').value.trim();
+  const baseUrl = $('baseUrl').value.trim();
+  const campaignId = $('campaignId').value.trim();
+  if (!token) {
+    $('events').textContent = '(no auth token entered — paste one to enable live feed)';
+    return;
+  }
+  let ticket;
+  try {
+    const r = await fetch(`${baseUrl}/api/sse/ticket`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!r.ok) throw new Error(`ticket: ${r.status}`);
+    ticket = (await r.json()).ticket;
+  } catch (e) {
+    $('events').textContent = `(ticket fetch failed: ${e.message})`;
+    return;
+  }
+  $('events').textContent = '';
+  sseSource = new EventSource(
+    `${baseUrl}/api/campaign-events?ticket=${encodeURIComponent(ticket)}&campaign_id=${campaignId}`,
+  );
+  sseSource.onmessage = (ev) => {
+    let label = ev.data;
+    try { const j = JSON.parse(ev.data); if (j.label) label = j.label; } catch (_) {}
+    const div = document.createElement('div');
+    div.textContent = label;
+    $('events').appendChild(div);
+    $('events').scrollTop = $('events').scrollHeight;
+  };
+}
+
+// ─── WIRING ─────────────────────────────────────────────────────────────────
+$('btnConnect').addEventListener('click', connect);
+$('btnDisconnect').addEventListener('click', disconnect);
+window.addEventListener('beforeunload', () => { if (ws) disconnect(); });
+</script>
+</body>
+</html>

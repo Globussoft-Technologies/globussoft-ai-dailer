@@ -61,9 +61,15 @@ export default function CrmTab({
                 <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px'}}>
                   <div>
                     <div style={{fontWeight: 700, color: '#e2e8f0', fontSize: '1rem', marginBottom: '4px'}}>{c.name}</div>
-                    <span style={{background: 'rgba(6,182,212,0.2)', color: '#22d3ee', fontSize: '0.7rem', padding: '2px 8px', borderRadius: '10px', fontWeight: 600}}>
-                      {c.product_name}
-                    </span>
+                    {c.product_name ? (
+                      <span style={{background: 'rgba(6,182,212,0.2)', color: '#22d3ee', fontSize: '0.7rem', padding: '2px 8px', borderRadius: '10px', fontWeight: 600}}>
+                        {c.product_name}
+                      </span>
+                    ) : (
+                      <span style={{background: 'rgba(234,179,8,0.15)', color: '#fbbf24', fontSize: '0.7rem', padding: '2px 8px', borderRadius: '10px', fontWeight: 600}}>
+                        ⚠ No product linked
+                      </span>
+                    )}
                   </div>
                   <span style={{padding: '2px 10px', borderRadius: '12px', fontSize: '0.7rem', fontWeight: 600,
                     color: '#22c55e', background: 'rgba(34,197,94,0.15)'}}>

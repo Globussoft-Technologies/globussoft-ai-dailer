@@ -367,8 +367,20 @@ type Pronunciation struct {
 }
 
 // GetAllPronunciations returns all pronunciation entries ordered by word.
+//
+// Rows where word and phonetic are identical (case-insensitive, after trim)
+// are filtered out at the SQL level. Such rules are no-ops by definition — the
+// TTS engine produces the same audio whether the rule fires or not — but they
+// pollute the admin UI ("BDRPL → BDRPL") and pad the LLM system prompt. The
+// API (POST /api/pronunciation) and the React form both reject identical
+// inputs, so any row still matching today is legacy data that pre-dates that
+// validation. Filtering at read time means we don't need a one-shot DB
+// migration to clean it up across every deployment.
 func (d *DB) GetAllPronunciations() ([]Pronunciation, error) {
-	rows, err := d.pool.Query(`SELECT id, word, phonetic FROM pronunciation_guide ORDER BY word`)
+	rows, err := d.pool.Query(
+		`SELECT id, word, phonetic FROM pronunciation_guide
+		 WHERE LOWER(TRIM(word)) <> LOWER(TRIM(phonetic))
+		 ORDER BY word`)
 	if err != nil {
 		return nil, err
 	}

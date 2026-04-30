@@ -2,21 +2,30 @@ package db
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 )
 
 // WAChannelSettings stores per-org WhatsApp channel credentials (Phase 3C table: wa_channel_configs).
+//
+// The flat columns (api_key, app_id, phone_number, webhook_url) are kept for
+// backwards-compatibility with the gupshup-only sender code that still reads
+// them directly. New per-provider fields (Wati's bearer_token, AiSensei's
+// base_url, Meta's access_token / app_secret / verify_token, etc.) live in
+// the JSON `credentials` column so any provider can store its own shape
+// without further schema changes.
 type WAChannelSettings struct {
-	ID          int64  `json:"id"`
-	OrgID       int64  `json:"org_id"`
-	Provider    string `json:"provider"` // gupshup, wati, aisensei, interakt, meta
-	PhoneNumber string `json:"phone_number"`
-	APIKey      string `json:"api_key"`
-	AppID       string `json:"app_id"`
-	WebhookURL  string `json:"webhook_url"`
-	IsActive    bool   `json:"is_active"`
-	AIEnabled   bool   `json:"ai_enabled"`
-	CreatedAt   string `json:"created_at"`
+	ID          int64             `json:"id"`
+	OrgID       int64             `json:"org_id"`
+	Provider    string            `json:"provider"` // gupshup, wati, aisensei, interakt, meta
+	PhoneNumber string            `json:"phone_number"`
+	APIKey      string            `json:"api_key"`
+	AppID       string            `json:"app_id"`
+	WebhookURL  string            `json:"webhook_url"`
+	Credentials map[string]string `json:"credentials"`
+	IsActive    bool              `json:"is_active"`
+	AIEnabled   bool              `json:"ai_enabled"`
+	CreatedAt   string            `json:"created_at"`
 }
 
 // WAMessage is a single message in a WA conversation.
@@ -35,6 +44,7 @@ func (d *DB) GetWAChannelConfigsByOrg(orgID int64) ([]WAChannelSettings, error) 
 	rows, err := d.pool.Query(`
 		SELECT id, org_id, COALESCE(provider,''), COALESCE(phone_number,''),
 		COALESCE(api_key,''), COALESCE(app_id,''), COALESCE(webhook_url,''),
+		COALESCE(credentials,'{}'),
 		COALESCE(is_active,1), COALESCE(ai_enabled,0),
 		DATE_FORMAT(created_at,'%Y-%m-%d %H:%i:%s')
 		FROM wa_channel_configs WHERE org_id=? ORDER BY id`, orgID)
@@ -46,9 +56,18 @@ func (d *DB) GetWAChannelConfigsByOrg(orgID int64) ([]WAChannelSettings, error) 
 	for rows.Next() {
 		var c WAChannelSettings
 		var active, aiEnabled int
+		var credsJSON string
 		if err := rows.Scan(&c.ID, &c.OrgID, &c.Provider, &c.PhoneNumber,
-			&c.APIKey, &c.AppID, &c.WebhookURL, &active, &aiEnabled, &c.CreatedAt); err != nil {
+			&c.APIKey, &c.AppID, &c.WebhookURL, &credsJSON,
+			&active, &aiEnabled, &c.CreatedAt); err != nil {
 			return nil, err
+		}
+		// Tolerate malformed JSON — fall back to an empty map so a single bad
+		// row doesn't 500 the whole listing. The flat columns still surface
+		// via APIKey/AppID/PhoneNumber so the modal isn't completely empty.
+		c.Credentials = map[string]string{}
+		if credsJSON != "" {
+			_ = json.Unmarshal([]byte(credsJSON), &c.Credentials)
 		}
 		c.IsActive = active == 1
 		c.AIEnabled = aiEnabled == 1
@@ -116,24 +135,41 @@ func (d *DB) DeleteWAChannelConfig(id, orgID int64) error {
 // track row IDs, so we upsert on the (org_id, provider) unique key rather
 // than branching on insert-vs-update in application code. autoReply nil
 // means "don't change the stored value" (modal toggle is optional).
-func (d *DB) UpsertWAChannelConfig(orgID int64, provider, phone, apiKey, appID, webhookURL string, autoReply *bool) (int64, error) {
+//
+// `creds` is the full credentials map posted by the frontend; it's serialised
+// into the `credentials` JSON column so per-provider fields that don't have
+// a flat column (Wati's bearer_token, AiSensei's base_url, Meta's
+// access_token / app_secret / verify_token, etc.) round-trip cleanly. The
+// flat columns (api_key, app_id, phone_number) stay populated for the
+// gupshup-only sender code that still reads them directly — the API handler
+// extracts those three from `creds` and passes them in.
+func (d *DB) UpsertWAChannelConfig(orgID int64, provider, phone, apiKey, appID, webhookURL string, creds map[string]string, autoReply *bool) (int64, error) {
 	ai := 1
 	if autoReply != nil && !*autoReply {
 		ai = 0
 	}
+	if creds == nil {
+		creds = map[string]string{}
+	}
+	credsJSON, err := json.Marshal(creds)
+	if err != nil {
+		return 0, err
+	}
 	res, err := d.pool.Exec(`
 		INSERT INTO wa_channel_configs
-			(org_id, provider, phone_number, api_key, app_id, webhook_url, is_active, ai_enabled, auto_reply)
-		VALUES (?,?,?,?,?,?,1,?,?)
+			(org_id, provider, phone_number, api_key, app_id, webhook_url, credentials,
+			 is_active, ai_enabled, auto_reply)
+		VALUES (?,?,?,?,?,?,?,1,?,?)
 		ON DUPLICATE KEY UPDATE
 			phone_number=VALUES(phone_number),
 			api_key=VALUES(api_key),
 			app_id=VALUES(app_id),
 			webhook_url=VALUES(webhook_url),
+			credentials=VALUES(credentials),
 			is_active=1,
 			ai_enabled=VALUES(ai_enabled),
 			auto_reply=VALUES(auto_reply)`,
-		orgID, provider, phone, apiKey, appID, webhookURL, ai, ai)
+		orgID, provider, phone, apiKey, appID, webhookURL, string(credsJSON), ai, ai)
 	if err != nil {
 		return 0, err
 	}

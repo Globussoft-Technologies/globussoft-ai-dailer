@@ -9,11 +9,19 @@ const PROVIDERS = [
   { value: 'meta', label: 'Meta (Cloud API)' },
 ];
 
+// Field `key` values are the JSON keys posted to /api/wa/config; backend
+// reads body.Credentials["api_key" / "app_id" / "phone_number" / "webhook_url"]
+// and maps each into its own column. The user-facing `label` stays
+// human-readable; only the wire-format key matches the backend's expected
+// names. Renaming `app_name` → `app_id` and `source_phone` → `phone_number`
+// closes the silent persistence gap where users filled the form, hit Save,
+// reloaded, and watched their values disappear because no one was reading
+// those keys server-side.
 const PROVIDER_FIELDS = {
   gupshup: [
     { key: 'api_key', label: 'API Key', type: 'password' },
-    { key: 'app_name', label: 'App Name', type: 'text' },
-    { key: 'source_phone', label: 'Source Phone', type: 'text' },
+    { key: 'app_id', label: 'App Name', type: 'text' },
+    { key: 'phone_number', label: 'Source Phone', type: 'text' },
   ],
   wati: [
     { key: 'bearer_token', label: 'Bearer Token', type: 'password' },
@@ -34,6 +42,43 @@ const PROVIDER_FIELDS = {
   ],
 };
 
+/* ─── Secret input with show/hide toggle ─── */
+// Used for any credential field (API key, bearer token, app secret). Masks
+// the value by default to prevent shoulder-surfing during screen-share, with
+// an eye toggle for the user to verify what they pasted. autoComplete and
+// the data-* attributes opt out of browser/password-manager autofill so the
+// user's personal saved logins don't accidentally get suggested into a
+// third-party API-key field.
+function SecretField({ value, onChange, placeholder }) {
+  const [reveal, setReveal] = useState(false);
+  return (
+    <div style={{ position: 'relative' }}>
+      <input
+        type={reveal ? 'text' : 'password'}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        autoComplete="off"
+        spellCheck={false}
+        data-1p-ignore
+        data-lpignore="true"
+        style={{ ...inputStyle, paddingRight: '52px' }}
+      />
+      <button
+        type="button"
+        onClick={() => setReveal(!reveal)}
+        aria-label={reveal ? 'Hide value' : 'Show value'}
+        style={{
+          position: 'absolute', right: '6px', top: '50%', transform: 'translateY(-50%)',
+          background: 'none', border: 'none', color: '#94a3b8',
+          cursor: 'pointer', fontSize: '0.75rem', padding: '4px 8px',
+        }}>
+        {reveal ? 'Hide' : 'Show'}
+      </button>
+    </div>
+  );
+}
+
 /* ─── Config Modal ─── */
 function ConfigModal({ show, onClose, apiFetch, API_URL, orgProducts, selectedOrg }) {
   const [provider, setProvider] = useState('gupshup');
@@ -41,10 +86,12 @@ function ConfigModal({ show, onClose, apiFetch, API_URL, orgProducts, selectedOr
   const [defaultProduct, setDefaultProduct] = useState('');
   const [autoReply, setAutoReply] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
     if (!show || !selectedOrg) return;
+    setError('');
     apiFetch(`${API_URL}/wa/config`)
       .then(r => r.ok ? r.json() : null)
       .then(data => {
@@ -59,22 +106,42 @@ function ConfigModal({ show, onClose, apiFetch, API_URL, orgProducts, selectedOr
       .catch(() => setLoaded(true));
   }, [show, selectedOrg]);
 
+  // Required = every field shown for the current provider. The list in
+  // PROVIDER_FIELDS is intentionally minimal (no optional fields) so any blank
+  // entry in the modal means the provider integration won't actually work.
+  const fields = PROVIDER_FIELDS[provider] || [];
+  const missingField = fields.find(f => !(creds[f.key] || '').trim());
+  const canSave = !saving && fields.length > 0 && !missingField;
+
   const handleSave = async () => {
+    setError('');
+    if (missingField) {
+      setError(`${missingField.label} is required`);
+      return;
+    }
     setSaving(true);
     try {
-      await apiFetch(`${API_URL}/wa/config`, {
+      const res = await apiFetch(`${API_URL}/wa/config`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ provider, credentials: creds, default_product_id: defaultProduct || null, auto_reply: autoReply }),
       });
+      if (!res.ok) {
+        let msg = `Save failed (HTTP ${res.status})`;
+        try { const data = await res.json(); if (data?.error || data?.detail) msg = data.error || data.detail; } catch (_) {}
+        setError(msg);
+        setSaving(false);
+        return;
+      }
       onClose();
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      setError('Network error — could not reach server');
+    }
     setSaving(false);
   };
 
   if (!show) return null;
 
-  const fields = PROVIDER_FIELDS[provider] || [];
   const webhookUrl = `https://test.callified.ai/wa/webhook/${provider}`;
 
   return (
@@ -85,16 +152,31 @@ function ConfigModal({ show, onClose, apiFetch, API_URL, orgProducts, selectedOr
           <button onClick={onClose} style={closeBtnStyle}>&times;</button>
         </div>
 
+        {error && (
+          <div style={{ background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '8px', padding: '10px 14px', marginBottom: '1rem', color: '#fca5a5', fontSize: '0.85rem' }}>
+            {error}
+          </div>
+        )}
+
         <label style={labelStyle}>Provider</label>
-        <select value={provider} onChange={e => { setProvider(e.target.value); setCreds({}); }} style={selectStyle}>
+        <select value={provider} onChange={e => { setProvider(e.target.value); setCreds({}); setError(''); }} style={selectStyle}>
           {PROVIDERS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
         </select>
 
         {fields.map(f => (
           <div key={f.key}>
             <label style={labelStyle}>{f.label}</label>
-            <input type={f.type} value={creds[f.key] || ''} onChange={e => setCreds({ ...creds, [f.key]: e.target.value })}
-              style={inputStyle} placeholder={f.label} />
+            {f.type === 'password' ? (
+              <SecretField
+                value={creds[f.key] || ''}
+                onChange={(v) => { setCreds({ ...creds, [f.key]: v }); if (error) setError(''); }}
+                placeholder={f.label}
+              />
+            ) : (
+              <input type={f.type} value={creds[f.key] || ''}
+                onChange={e => { setCreds({ ...creds, [f.key]: e.target.value }); if (error) setError(''); }}
+                style={inputStyle} placeholder={f.label} />
+            )}
           </div>
         ))}
 
@@ -123,8 +205,10 @@ function ConfigModal({ show, onClose, apiFetch, API_URL, orgProducts, selectedOr
           </div>
         </div>
 
-        <button onClick={handleSave} disabled={saving}
-          style={{ ...btnStyle, width: '100%', background: '#25D366', color: '#fff', fontWeight: 700, opacity: saving ? 0.6 : 1 }}>
+        <button onClick={handleSave} disabled={!canSave}
+          title={missingField ? `${missingField.label} is required` : ''}
+          style={{ ...btnStyle, width: '100%', background: '#25D366', color: '#fff', fontWeight: 700,
+            opacity: canSave ? 1 : 0.5, cursor: canSave ? 'pointer' : 'not-allowed' }}>
           {saving ? 'Saving...' : 'Save Configuration'}
         </button>
       </div>
@@ -410,7 +494,11 @@ const inputBarStyle = {
 };
 
 const inputStyle = {
-  width: '100%', padding: '8px 12px', borderRadius: '8px',
+  // boxSizing: 'border-box' so the 12px horizontal padding + 1px border are
+  // included in the 100% width — without this the input renders ~26px wider
+  // than its container, which is what was producing the stray horizontal
+  // scrollbar at the bottom of the WhatsApp Channel Config modal.
+  width: '100%', boxSizing: 'border-box', padding: '8px 12px', borderRadius: '8px',
   border: '1px solid rgba(255,255,255,0.1)', background: '#1e293b',
   color: '#e2e8f0', fontSize: '0.85rem', outline: 'none',
 };
@@ -461,8 +549,11 @@ const overlayStyle = {
 };
 
 const modalStyle = {
-  width: '480px', maxHeight: '85vh', overflowY: 'auto',
-  padding: '1.5rem', borderRadius: '12px',
+  // overflowX: 'hidden' is a defence-in-depth in case any future field still
+  // overflows the content area; the box-sizing fix on inputStyle is the
+  // primary cause of the historical horizontal scrollbar.
+  width: '480px', maxHeight: '85vh', overflowY: 'auto', overflowX: 'hidden',
+  padding: '1.5rem', borderRadius: '12px', boxSizing: 'border-box',
 };
 
 const closeBtnStyle = {

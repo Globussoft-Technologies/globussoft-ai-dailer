@@ -115,18 +115,19 @@ type leadCreateRequest struct {
 func (s *Server) createLead(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	var req leadCreateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.FirstName == "" || req.Phone == "" {
-		writeError(w, http.StatusBadRequest, "first_name and phone required")
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	if !isValidPhone(req.Phone) {
-		writeError(w, http.StatusBadRequest, "phone must be exactly 10 digits")
+	if fields := validateLeadFields(req.FirstName, req.Phone); len(fields) > 0 {
+		writeFieldError(w, http.StatusBadRequest, "validation failed", fields)
 		return
 	}
 	id, err := s.db.CreateLead(req.FirstName, req.LastName, req.Phone, req.Source, req.Interest, ac.OrgID)
 	if err != nil {
 		if strings.Contains(err.Error(), "Duplicate") || strings.Contains(err.Error(), "1062") {
-			writeError(w, http.StatusConflict, "phone number already exists")
+			writeFieldError(w, http.StatusConflict, "phone number already exists",
+				map[string]string{"phone": "Phone number already exists"})
 			return
 		}
 		s.logger.Sugar().Errorw("createLead", "err", err)
@@ -134,6 +135,42 @@ func (s *Server) createLead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]int64{"id": id})
+}
+
+// validateLeadFields mirrors the Quick Add inline validation strings on the
+// frontend so per-field server errors match what the form displays.
+func validateLeadFields(firstName, phone string) map[string]string {
+	fields := map[string]string{}
+	name := strings.TrimSpace(firstName)
+	if name == "" {
+		fields["first_name"] = "Name is required"
+	} else if !nameHasLettersOnly(name) {
+		fields["first_name"] = "Name must contain only letters"
+	}
+	if strings.TrimSpace(phone) == "" {
+		fields["phone"] = "Phone is required"
+	} else if !isValidPhone(phone) {
+		fields["phone"] = "Indian numbers must be exactly 10 digits"
+	}
+	return fields
+}
+
+// nameHasLettersOnly accepts names made of ASCII letters plus common
+// punctuation (space, apostrophe, hyphen, dot). Rejects any digit and
+// requires at least one letter — mirrors the frontend rule in CampaignDetail.
+func nameHasLettersOnly(s string) bool {
+	hasLetter := false
+	for _, r := range s {
+		switch {
+		case r >= 'A' && r <= 'Z', r >= 'a' && r <= 'z':
+			hasLetter = true
+		case r == ' ', r == '\'', r == '-', r == '.':
+			// allowed
+		default:
+			return false
+		}
+	}
+	return hasLetter
 }
 
 // ── GET /api/leads/{id} ───────────────────────────────────────────────────────
@@ -179,8 +216,8 @@ func (s *Server) updateLead(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	if !isValidPhone(req.Phone) {
-		writeError(w, http.StatusBadRequest, "phone must be exactly 10 digits")
+	if fields := validateLeadFields(req.FirstName, req.Phone); len(fields) > 0 {
+		writeFieldError(w, http.StatusBadRequest, "validation failed", fields)
 		return
 	}
 	updated, err := s.db.UpdateLead(id, req.FirstName, req.LastName, req.Phone, req.Source, req.Interest, ac.OrgID)

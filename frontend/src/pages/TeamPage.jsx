@@ -22,6 +22,12 @@ export default function TeamPage({ apiFetch, API_URL }) {
     setLoading(false);
   };
 
+  const closeInvite = () => {
+    setShowInvite(false);
+    setInviteForm({ email: '', full_name: '', role: 'Agent', password: '' });
+    setInviteError('');
+  };
+
   const handleInvite = async (e) => {
     e.preventDefault();
     setInviteError('');
@@ -32,13 +38,12 @@ export default function TeamPage({ apiFetch, API_URL }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(inviteForm),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        setShowInvite(false);
-        setInviteForm({ email: '', full_name: '', role: 'Agent', password: '' });
+        closeInvite();
         fetchTeam();
       } else {
-        setInviteError(data.detail || 'Failed to invite user');
+        setInviteError(data.error || data.detail || 'Failed to invite user');
       }
     } catch (e) {
       setInviteError('Network error');
@@ -114,7 +119,7 @@ export default function TeamPage({ apiFetch, API_URL }) {
         <div style={{
           position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex',
           alignItems: 'center', justifyContent: 'center', zIndex: 1000,
-        }} onClick={() => setShowInvite(false)}>
+        }} onClick={closeInvite}>
           <div style={{ ...cardStyle, width: '420px', maxWidth: '90vw' }} onClick={e => e.stopPropagation()}>
             <h3 style={{ margin: '0 0 16px', color: '#f1f5f9' }}>Invite Team Member</h3>
             <form onSubmit={handleInvite}>
@@ -139,14 +144,14 @@ export default function TeamPage({ apiFetch, API_URL }) {
                   <option value="Viewer">Viewer</option>
                 </select>
                 <input
-                  placeholder="Password (min 6 chars)" type="password" required minLength={6}
+                  placeholder="Password (min 8 chars)" type="password" required minLength={8} maxLength={128}
                   value={inviteForm.password}
                   onChange={e => setInviteForm({ ...inviteForm, password: e.target.value })}
                   style={inputStyle}
                 />
                 {inviteError && <div style={{ color: '#fca5a5', fontSize: '0.85rem' }}>{inviteError}</div>}
                 <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-                  <button type="button" onClick={() => setShowInvite(false)}
+                  <button type="button" onClick={closeInvite}
                     style={{ background: 'rgba(148,163,184,0.15)', border: '1px solid rgba(148,163,184,0.2)', borderRadius: '6px', color: '#94a3b8', padding: '8px 16px', cursor: 'pointer' }}>
                     Cancel
                   </button>

@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/globussoft/callified-backend/internal/db"
 )
@@ -46,8 +47,18 @@ func (s *Server) inviteTeamMember(w http.ResponseWriter, r *http.Request) {
 		Role     string `json:"role"`
 		Password string `json:"password"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Email == "" || body.Password == "" {
-		writeError(w, http.StatusBadRequest, "email and password required")
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	body.Email = strings.TrimSpace(strings.ToLower(body.Email))
+	body.FullName = strings.TrimSpace(body.FullName)
+	if body.Email == "" {
+		writeError(w, http.StatusBadRequest, "Email is required.")
+		return
+	}
+	if msg := validatePassword(body.Password); msg != "" {
+		writeError(w, http.StatusBadRequest, msg)
 		return
 	}
 	if body.Role == "" {
@@ -60,11 +71,63 @@ func (s *Server) inviteTeamMember(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := s.db.CreateUserWithRole(body.Email, hash, body.FullName, body.Role, ac.OrgID)
 	if err != nil {
+		// Surface the specific reason the insert failed instead of a generic
+		// "could not create user". The most common case is the unique-email
+		// constraint (MySQL 1062); telling the inviter that explicitly avoids
+		// the silent "Failed to invite user" that issue #56 reported.
+		errMsg := err.Error()
+		if strings.Contains(errMsg, "1062") || strings.Contains(errMsg, "Duplicate") {
+			writeError(w, http.StatusConflict,
+				"A user with this email already exists.")
+			return
+		}
 		s.logger.Sugar().Errorw("inviteTeamMember", "err", err)
-		writeError(w, http.StatusInternalServerError, "could not create user")
+		writeError(w, http.StatusInternalServerError, "Could not create user. Please try again.")
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]int64{"id": id})
+}
+
+// validatePassword enforces the org-wide password policy. Returns "" when the
+// password is acceptable, or a user-facing reason it isn't.
+//
+// Rules (issue #56):
+//   - At least 8 characters (was 6 — too low for a 2026 baseline)
+//   - At most 128 characters (bcrypt truncates at 72 bytes, but we let the
+//     user type a passphrase up to 128 and bcrypt's silent truncation is
+//     fine for practical purposes — we just guard against absurdly long
+//     inputs that could DoS the bcrypt cost)
+//   - Not in the small in-memory blocklist of trivially-common passwords
+//
+// We deliberately do NOT require character classes (NIST 800-63B explicitly
+// recommends against the "must have one uppercase, one digit, one symbol"
+// nonsense — it pushes users toward predictable patterns like "Password1!").
+// Length + breach awareness is the right baseline.
+func validatePassword(p string) string {
+	if len(p) < 8 {
+		return "Password must be at least 8 characters."
+	}
+	if len(p) > 128 {
+		return "Password is too long (max 128 characters)."
+	}
+	lower := strings.ToLower(p)
+	if _, bad := commonPasswords[lower]; bad {
+		return "This password is too common. Please choose a stronger one."
+	}
+	return ""
+}
+
+// commonPasswords is a tiny, hard-coded blocklist of the top trivial
+// passwords. Keeping it in-process avoids a dependency on an external
+// breach-list service for a basic gate; the real defense is bcrypt + the
+// 8-char minimum above. Update list in lockstep with whatever the auth
+// signup endpoint enforces (so the policy is consistent across surfaces).
+var commonPasswords = map[string]struct{}{
+	"password": {}, "password1": {}, "password123": {}, "passw0rd": {},
+	"12345678": {}, "123456789": {}, "1234567890": {},
+	"qwerty": {}, "qwerty123": {}, "qwertyuiop": {},
+	"abc12345": {}, "iloveyou": {}, "admin123": {}, "welcome1": {},
+	"letmein1": {}, "monkey123": {}, "football": {},
 }
 
 // ── PUT /api/team/{id}/role ───────────────────────────────────────────────────

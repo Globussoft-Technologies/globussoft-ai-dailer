@@ -187,6 +187,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 
 	// ── Campaign reviews ──────────────────────────────────────────────────────
 	mux.HandleFunc("GET /api/campaigns/{id}/call-reviews", auth(s.getCampaignCallReviews))
+	mux.HandleFunc("GET /api/campaigns/{id}/call-insights", auth(s.getCampaignCallInsights))
 
 	// ── Transcript review ─────────────────────────────────────────────────────
 	mux.HandleFunc("GET /api/transcripts/{id}/review", auth(s.getTranscriptReview))
@@ -404,6 +405,13 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 
 func writeError(w http.ResponseWriter, code int, msg string) {
 	writeJSON(w, code, map[string]string{"error": msg})
+}
+
+// writeFieldError returns a structured validation error so the frontend can
+// render per-field messages inline (no alert popups). `fields` maps the JSON
+// field name (e.g. "first_name", "phone") to the user-facing message.
+func writeFieldError(w http.ResponseWriter, code int, msg string, fields map[string]string) {
+	writeJSON(w, code, map[string]any{"error": msg, "fields": fields})
 }
 
 // parseID reads a path parameter as int64.

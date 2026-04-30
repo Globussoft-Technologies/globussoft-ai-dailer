@@ -10,6 +10,7 @@ export default function SettingsPage({ apiFetch, API_URL, selectedOrg, orgs, org
   const [newProductName, setNewProductName] = useState('');
   const [showProductInput, setShowProductInput] = useState(false);
   const [scraping, setScraping] = useState(null);
+  const [scrapeStatus, setScrapeStatus] = useState({ id: null, kind: '', text: '' });
   const [addingProduct, setAddingProduct] = useState(false);
   const [productAddError, setProductAddError] = useState('');
 
@@ -112,12 +113,26 @@ export default function SettingsPage({ apiFetch, API_URL, selectedOrg, orgs, org
 
   const handleScrapeProduct = async (productId) => {
     setScraping(productId);
+    setScrapeStatus({ id: productId, kind: 'pending', text: '' });
     try {
       const res = await apiFetch(`${API_URL}/products/${productId}/scrape`, { method: 'POST' });
-      const data = await res.json();
-      if (data.scraped_info) fetchOrgProducts(selectedOrg.id);
-    } catch(e) { console.error(e); }
-    setScraping(null);
+      let data = {};
+      try { data = await res.json(); } catch (_) {}
+      if (!res.ok) {
+        setScrapeStatus({ id: productId, kind: 'error',
+          text: data.error || 'Could not scrape website. Please check the URL.' });
+      } else {
+        await fetchOrgProducts(selectedOrg.id);
+        setScrapeStatus({ id: productId, kind: 'success', text: 'Website scraped. Knowledge updated.' });
+      }
+    } catch (e) {
+      setScrapeStatus({ id: productId, kind: 'error', text: 'Could not scrape website. Please check the URL.' });
+    } finally {
+      setScraping(null);
+      setTimeout(() => {
+        setScrapeStatus(prev => prev.id === productId ? { id: null, kind: '', text: '' } : prev);
+      }, 4000);
+    }
   };
 
   const handleSaveProduct = async (productId, updates) => {
@@ -168,7 +183,7 @@ export default function SettingsPage({ apiFetch, API_URL, selectedOrg, orgs, org
       handleAddProduct={handleAddProduct} orgProducts={orgProducts}
       addingProduct={addingProduct} productAddError={productAddError}
       handleDeleteProduct={handleDeleteProduct} handleSaveProduct={handleSaveProduct}
-      scraping={scraping} handleScrapeProduct={handleScrapeProduct}
+      scraping={scraping} handleScrapeProduct={handleScrapeProduct} scrapeStatus={scrapeStatus}
       promptDirty={promptDirty} handleSaveSystemPrompt={handleSaveSystemPrompt}
       promptSaving={promptSaving} promptSaveStatus={promptSaveStatus}
       systemPromptAuto={systemPromptAuto}

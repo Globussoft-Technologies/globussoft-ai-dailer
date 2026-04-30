@@ -501,10 +501,13 @@ Return ONLY a JSON object with keys "agent_persona" and "call_flow_instructions"
 }
 
 // POST /api/products/{id}/generate-persona
-// Uses Gemini to generate only the agent_persona.
+// Generates both agent_persona and call_flow_instructions from the product's
+// scraped info / manual notes and persists them. Returns both fields plus a
+// status flag the frontend uses to show success/error inline.
 func (s *Server) generateProductPersona(w http.ResponseWriter, r *http.Request) {
 	if s.llmProvider == nil {
-		writeError(w, http.StatusServiceUnavailable, "LLM not configured")
+		writeJSON(w, http.StatusServiceUnavailable,
+			map[string]string{"status": "error", "error": "LLM not configured", "message": "LLM not configured"})
 		return
 	}
 	id, err := parseID(r, "id")
@@ -520,23 +523,49 @@ func (s *Server) generateProductPersona(w http.ResponseWriter, r *http.Request) 
 
 	context := strings.TrimSpace(product.ScrapedInfo + "\n" + product.ManualNotes)
 	if context == "" {
-		context = product.Name
-	}
-
-	persona, err := s.llmProvider.GenerateText(r.Context(),
-		"Write a concise 2-3 sentence sales agent persona for this product. Be specific about tone and style.",
-		"Product: "+context, 512)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "LLM error: "+err.Error())
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"status":  "error",
+			"error":   "no product context",
+			"message": "Please scrape the website or add manual notes first.",
+		})
 		return
 	}
 
-	if err := s.db.UpdateProductPrompt(id, persona, ""); err != nil {
+	persona, err := s.llmProvider.GenerateText(r.Context(),
+		"Write a concise 2-3 sentence sales agent persona for this product. Be specific about tone and style. Return only the persona text — no preamble, no quotes.",
+		"Product: "+context, 512)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{
+			"status": "error", "error": err.Error(),
+			"message": "LLM error: " + err.Error(),
+		})
+		return
+	}
+
+	callFlow, err := s.llmProvider.GenerateText(r.Context(),
+		"Write a 5-7 step outbound sales call flow for this product. Use the format: \"Step 1: ...\" on each line. Be specific to the product. Return only the steps — no preamble.",
+		"Product: "+context, 768)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{
+			"status": "error", "error": err.Error(),
+			"message": "LLM error: " + err.Error(),
+		})
+		return
+	}
+
+	persona = strings.TrimSpace(persona)
+	callFlow = strings.TrimSpace(callFlow)
+
+	if err := s.db.UpdateProductPrompt(id, persona, callFlow); err != nil {
 		s.logger.Sugar().Errorw("generateProductPersona: UpdateProductPrompt", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"agent_persona": persona})
+	writeJSON(w, http.StatusOK, map[string]string{
+		"status":                   "success",
+		"agent_persona":            persona,
+		"call_flow_instructions":   callFlow,
+	})
 }
 
 // POST /api/organizations/{id}/generate-prompt
