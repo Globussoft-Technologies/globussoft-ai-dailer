@@ -13,6 +13,38 @@ const LANG_NAMES = {
   kn: 'Kannada',  ml: 'Malayalam',
 };
 
+// agentDisplayName scans an AI turn's text for the persona name the AI
+// announced ("Hi …, I'm Aditya …" / "this is Raj …" / "मैं कबीर बात कर रहा
+// हूं …"). Returns the bare name when found, otherwise the generic "AI"
+// fallback. This avoids the old hardcoded "Arjun (AI)" label, which was
+// wrong whenever the campaign used a non-default voice (Aditya, Raj, Meera,
+// Kabir, …) — the bubble label now matches what the AI actually said.
+//
+// We compute this once per transcript (not per turn) so every AI bubble
+// inside the same call shows the same name. If the first AI turn is too
+// short or doesn't include a self-introduction, later turns are scanned as
+// a fallback before giving up and returning "AI".
+const NAME_PATTERNS = [
+  /\bI[' ]?m\s+([A-Z][a-zA-Z]{1,18})/,           // "I'm Aditya", "I am Raj"
+  /\bI am\s+([A-Z][a-zA-Z]{1,18})/,
+  /\bthis is\s+([A-Z][a-zA-Z]{1,18})/i,           // "This is Aditya"
+  /(?:मैं|मे)\s+([A-Z][a-zA-Z]{1,18})/,           // Devanagari sentence with Roman name
+  /(?:मैं|मे)\s+([ऀ-ॿ]{2,12})\s+(?:बात|बोल)/, // "मैं कबीर बात कर रहा हूँ"
+];
+function extractAgentName(turns) {
+  if (!Array.isArray(turns)) return 'AI';
+  for (const t of turns) {
+    if ((t.role || '').toLowerCase() !== 'ai' && (t.role || '').toLowerCase() !== 'model') continue;
+    const text = (t.text || t.Text || '').slice(0, 240); // cap regex work
+    if (!text) continue;
+    for (const re of NAME_PATTERNS) {
+      const m = text.match(re);
+      if (m && m[1]) return m[1].trim();
+    }
+  }
+  return 'AI';
+}
+
 export default function TranscriptModal({ transcriptLead, setTranscriptLead, transcripts, orgTimezone }) {
   const list = Array.isArray(transcripts) ? transcripts : [];
   // Esc-to-close so there's always a keyboard escape even if the ✕ is
@@ -48,7 +80,11 @@ export default function TranscriptModal({ transcriptLead, setTranscriptLead, tra
               <div style={{fontSize: '0.85rem', marginTop: '8px'}}>Transcripts will appear here after AI calls are completed.</div>
             </div>
           ) : (
-            list.map((t, idx) => (
+            list.map((t, idx) => {
+            // Resolve the agent name once per call so every AI bubble
+            // inside the same transcript shows the same persona.
+            const agentName = extractAgentName(t.transcript);
+            return (
               <div key={t.id || idx} style={{marginBottom: '1.5rem', background: 'rgba(0,0,0,0.2)', borderRadius: '12px', padding: '1.25rem', border: '1px solid rgba(255,255,255,0.05)'}}>
                 <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem'}}>
                   <div style={{display: 'flex', alignItems: 'center', gap: '10px'}}>
@@ -115,7 +151,7 @@ export default function TranscriptModal({ transcriptLead, setTranscriptLead, tra
                         color: '#e2e8f0', fontSize: '0.9rem', lineHeight: '1.5'
                       }}>
                         <div style={{fontSize: '0.7rem', fontWeight: 600, marginBottom: '4px', color: turn.role === 'AI' ? '#818cf8' : '#4ade80'}}>
-                          {turn.role === 'AI' ? 'Arjun (AI)' : transcriptLead.first_name || 'User'}
+                          {turn.role === 'AI' ? `${agentName} (AI)` : transcriptLead.first_name || 'User'}
                         </div>
                         {turn.text}
                       </div>
@@ -123,7 +159,8 @@ export default function TranscriptModal({ transcriptLead, setTranscriptLead, tra
                   ))}
                 </div>
               </div>
-            ))
+            );
+            })
           )}
         </div>
 
