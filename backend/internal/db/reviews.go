@@ -99,12 +99,12 @@ func (d *DB) GetCallReviewsByCampaign(campaignID int64, execIDs []int64, applyEx
 // silently falling back to the per-call review list and rendering an empty
 // state.
 type CampaignCallInsights struct {
-	TotalReviews       int64                `json:"total_reviews"`
-	AvgQualityScore    float64              `json:"avg_quality_score"`
-	AppointmentRate    float64              `json:"appointment_rate"`
-	SentimentBreakdown map[string]int64     `json:"sentiment_breakdown"`
-	TopImprovements    []ImprovementCount   `json:"top_improvements"`
-	TopFailureReasons  []FailureReason      `json:"top_failure_reasons"`
+	TotalReviews       int64              `json:"total_reviews"`
+	AvgQualityScore    float64            `json:"avg_quality_score"`
+	AppointmentRate    float64            `json:"appointment_rate"`
+	SentimentBreakdown map[string]int64   `json:"sentiment_breakdown"`
+	TopImprovements    []ImprovementCount `json:"top_improvements"`
+	TopFailureReasons  []FailureReason    `json:"top_failure_reasons"`
 }
 
 // ImprovementCount counts how many times the same prompt-improvement
@@ -291,12 +291,12 @@ type CallMemory struct {
 	Suggestion    string // prompt_improvement_suggestion
 }
 
-// GetLastCallMemory returns the most recent call reviews for a lead,
-// newest first, capped at limit. Returns nil for leadID <= 0 or when the
-// lead has no reviewed calls — callers treat nil as "no memory", which
-// must never block a call.
-func (d *DB) GetLastCallMemory(leadID int64, limit int) ([]CallMemory, error) {
-	if leadID <= 0 || limit <= 0 {
+// GetLastCallMemory returns the most recent call reviews for a lead within
+// the same campaign, newest first, capped at limit. Returns nil for invalid
+// IDs or when the lead has no reviewed calls in this campaign — callers treat
+// nil as "no memory", which must never block a call.
+func (d *DB) GetLastCallMemory(leadID, campaignID int64, limit int) ([]CallMemory, error) {
+	if leadID <= 0 || campaignID <= 0 || limit <= 0 {
 		return nil, nil
 	}
 	// COALESCE(cr.lead_id, ct.lead_id): rows written before lead_id was
@@ -310,8 +310,9 @@ func (d *DB) GetLastCallMemory(leadID int64, limit int) ([]CallMemory, error) {
 		FROM call_reviews cr
 		JOIN call_transcripts ct ON cr.transcript_id = ct.id
 		WHERE COALESCE(cr.lead_id, ct.lead_id) = ?
+		  AND ct.campaign_id = ?
 		ORDER BY cr.id DESC
-		LIMIT ?`, leadID, limit)
+		LIMIT ?`, leadID, campaignID, limit)
 	if err != nil {
 		return nil, err
 	}

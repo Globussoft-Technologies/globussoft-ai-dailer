@@ -196,8 +196,8 @@ func (b *Builder) BuildCallContext(_ context.Context, orgID, campaignID, leadID 
 	// don't control their layout.
 	memoryCount := 0
 	memoryBlock := ""
-	if leadID > 0 {
-		if memories, err := b.db.GetLastCallMemory(leadID, 3); err == nil {
+	if leadID > 0 && campaignID > 0 {
+		if memories, err := b.db.GetLastCallMemory(leadID, campaignID, 3); err == nil {
 			memoryBlock = renderCallMemory(memories)
 			memoryCount = len(memories)
 		}
