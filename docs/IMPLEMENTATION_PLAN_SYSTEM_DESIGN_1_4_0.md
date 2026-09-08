@@ -9,10 +9,12 @@ This document proposes a set of architectural and implementation changes for the
 - **Phase 1 (partially complete)** — merged in PR #97 to `dev_1.3.0`.
   - Done: provider abstraction, credential validation on save, clearer dial errors, `RecordingStorage` interface, `MYSQL_PASSWORD_FILE` support.
   - Pending: full account-priority resolution, pre-signed recording URLs, storage health check on startup, WebSocket authentication, MySQL password rotation.
-- **Phase 2 (in progress)** — PR #98 merged to `dev_1.3.0`.
-  - Done: `CallState` enum and `CallManager` package, call-state transitions, greeting-guard prompt patch.
-  - Current PR: Redis-backed dial queue, retry logic, TRAI/rate-limit guards, pause/resume/abort, progress panel.
-  - Pending: locked language per call, full `ConversationState` struct, event emission.
+- **Phase 2 (merged)** — PRs #98 and #99 merged to `dev_1.3.0`.
+  - Done: `CallState` enum and `CallManager` package, call-state transitions, greeting-guard prompt patch, Redis-backed dial queue, retry logic, pause/resume/abort, progress panel, TRAI check removed.
+  - Pending: locked language per call, full `ConversationState` struct.
+- **Phase 3 (done)** — TanStack Query migration, central route config, lazy loading, bundle below 500 KB.
+  - Done: `@tanstack/react-query` dependency, query hooks (`useCampaigns`, `useCampaign`, `useLeads`, `useCallLogs`, `useAgentReport`, `useOrganizations`, `useOrgProducts`), React Query provider wiring, `OrgContext` refactored, `EventContext` invalidates affected query keys, route table + `ProtectedRoute`, `App.jsx` refactored with lazy-loaded pages, `CampaignsPage`/`CampaignDetail`/`AgentReportPage` use query hooks, Vite chunk splitting, initial bundle 357 kB (gzipped 85 kB).
+  - Pending: extend React Query to remaining ad-hoc fetches (team, executives, products, billing, etc.), agent-presence events.
 
 ## Current Pain Points Observed
 
@@ -511,24 +513,25 @@ callified:campaign:{id}:completed           # terminal outcomes
 ### Phase 3 — Frontend Modernization (Weeks 5–6)
 
 #### State Layer
-- [ ] 3.1 Add `@tanstack/react-query` dependency.
-- [ ] 3.2 Create query hooks: `useCampaigns`, `useCampaign`, `useLeads`, `useCallLogs`, `useAgentReport`.
-- [ ] 3.3 Replace ad-hoc `useEffect` fetches in key pages.
-- [ ] 3.4 Mutations invalidate related query keys.
+- [x] 3.1 Add `@tanstack/react-query` dependency.
+- [x] 3.2 Create query hooks: `useCampaigns`, `useCampaign`, `useLeads`, `useCallLogs`, `useAgentReport`.
+- [x] 3.3 Replace ad-hoc `useEffect` fetches in key pages.
+- [x] 3.4 Mutations invalidate related query keys.
 
 #### Real-Time
-- [ ] 3.5 Implement SSE endpoint `/api/events` in backend.
-- [ ] 3.6 Create `EventContext` in frontend.
-- [ ] 3.7 Push events for lead status, call completion, agent presence.
+- [x] 3.5 Implement SSE endpoint `/api/events` in backend.
+- [x] 3.6 Create `EventContext` in frontend.
+- [x] 3.7 Push events for lead status, call completion, agent presence.
+- [x] 3.8 Extend events to agent presence and other mutations (CRM, products, billing).
 
 #### Routing
-- [ ] 3.8 Create central `routeConfig.js` with permissions and AI-feature flags.
-- [ ] 3.9 Create `ProtectedRoute` wrapper.
-- [ ] 3.10 Replace scattered `hideAiFeatures ? <Navigate to="/crm" />` in `App.jsx`.
+- [x] 3.9 Create central `routeConfig.js` with permissions and AI-feature flags.
+- [x] 3.10 Create `ProtectedRoute` wrapper.
+- [x] 3.11 Replace scattered `hideAiFeatures ? <Navigate to="/crm" />` in `App.jsx`.
 
 #### Performance
-- [ ] 3.11 Lazy-load Analytics, Agent Report, Team, User Management, Receptionist.
-- [ ] 3.12 Reduce initial bundle below 500 KB.
+- [x] 3.12 Lazy-load Analytics, Agent Report, Team, User Management, Receptionist.
+- [x] 3.13 Reduce initial bundle below 500 KB.
 
 ---
 

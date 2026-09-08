@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import CampaignsTab from '../components/tabs/CampaignsTab';
 import TranscriptModal from '../components/modals/TranscriptModal';
 

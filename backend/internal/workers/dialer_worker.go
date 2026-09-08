@@ -110,6 +110,13 @@ func (w *DialerWorker) processJob(ctx context.Context, job *rstore.DialJob, stat
 	if job.OrgID > 0 {
 		if isDND, _ := w.db.IsDNDNumber(job.OrgID, job.LeadPhone); isDND {
 			w.store.EmitCampaignEvent(ctx, job.CampaignID, job.LeadName, job.LeadPhone, "dnd", "on DND list")
+			w.store.PublishDomainEvent(ctx, rstore.DomainEvent{
+				Type:       rstore.EventLeadStatusChanged,
+				OrgID:      job.OrgID,
+				CampaignID: job.CampaignID,
+				LeadID:     job.LeadID,
+				Status:     "DND — do not call",
+			})
 			w.updateState(ctx, job.CampaignID, func(s *rstore.DialState) {
 				s.ProcessedCount++
 			})
@@ -136,6 +143,13 @@ func (w *DialerWorker) processJob(ctx context.Context, job *rstore.DialJob, stat
 
 	_, err := w.initiator.Initiate(ctx, data)
 	if err == nil {
+		w.store.PublishDomainEvent(ctx, rstore.DomainEvent{
+			Type:       rstore.EventLeadStatusChanged,
+			OrgID:      job.OrgID,
+			CampaignID: job.CampaignID,
+			LeadID:     job.LeadID,
+			Status:     "Calling",
+		})
 		w.updateState(ctx, job.CampaignID, func(s *rstore.DialState) {
 			s.ProcessedCount++
 		})
@@ -159,6 +173,13 @@ func (w *DialerWorker) processJob(ctx context.Context, job *rstore.DialJob, stat
 			s.LastError = "insufficient credits — recharge to continue"
 		})
 		w.store.EmitCampaignEvent(ctx, job.CampaignID, "Campaign", "", "failed", "insufficient credits — recharge to continue")
+		w.store.PublishDomainEvent(ctx, rstore.DomainEvent{
+			Type:       rstore.EventCampaignDialFinished,
+			OrgID:      job.OrgID,
+			CampaignID: job.CampaignID,
+			Status:     "stopped",
+			Detail:     "insufficient credits — recharge to continue",
+		})
 		return
 	}
 
@@ -183,7 +204,16 @@ func (w *DialerWorker) processJob(ctx context.Context, job *rstore.DialJob, stat
 		s.FailedCount++
 		s.LastError = job.LastError
 	})
-	_ = w.db.UpdateLeadStatus(job.LeadID, fmt.Sprintf("Call Failed (%d attempts)", job.Attempt))
+	failedStatus := fmt.Sprintf("Call Failed (%d attempts)", job.Attempt)
+	w.store.PublishDomainEvent(ctx, rstore.DomainEvent{
+		Type:       rstore.EventLeadStatusChanged,
+		OrgID:      job.OrgID,
+		CampaignID: job.CampaignID,
+		LeadID:     job.LeadID,
+		Status:     failedStatus,
+		Outcome:    job.LastError,
+	})
+	_ = w.db.UpdateLeadStatus(job.LeadID, failedStatus)
 }
 
 func (w *DialerWorker) updateState(ctx context.Context, campaignID int64, fn func(*rstore.DialState)) {
@@ -198,6 +228,13 @@ func (w *DialerWorker) updateState(ctx context.Context, campaignID int64, fn fun
 		state.Paused = false
 		state.CompletedAt = time.Now()
 		w.store.EmitCampaignEvent(ctx, campaignID, "Campaign", "", "finished", fmt.Sprintf("Dial queue complete (%d leads)", state.QueuedCount))
+		w.store.PublishDomainEvent(ctx, rstore.DomainEvent{
+			Type:       rstore.EventCampaignDialFinished,
+			OrgID:      state.CampaignID,
+			CampaignID: state.CampaignID,
+			Status:     "completed",
+			Detail:     fmt.Sprintf("Dial queue complete (%d leads)", state.QueuedCount),
+		})
 	}
 	if err := w.store.SetDialState(ctx, state); err != nil {
 		w.log.Warn("dialer_worker: failed to write state", zap.Int64("campaign_id", campaignID), zap.Error(err))

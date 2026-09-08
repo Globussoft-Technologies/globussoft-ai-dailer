@@ -1,4 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { useOrganizations, useOrgProducts } from '../hooks/useQueries';
+import { queryClient } from '../queryClient';
 import { API_URL } from '../constants/api';
 import { useAuth } from './AuthContext';
 
@@ -6,77 +8,67 @@ const OrgContext = createContext(null);
 
 export function OrgProvider({ children }) {
   const { apiFetch, currentUser } = useAuth();
-
-  const [orgs, setOrgs] = useState([]);
+  const { data: orgs = [], refetch: refetchOrgs } = useOrganizations();
   const [selectedOrg, setSelectedOrg] = useState(null);
   const [orgTimezone, setOrgTimezone] = useState(Intl.DateTimeFormat().resolvedOptions().timeZone);
-  const [orgProducts, setOrgProducts] = useState([]);
+  const [orgProductsOverride, setOrgProductsOverride] = useState(null);
 
-  const fetchOrgProducts = useCallback(async (orgId) => {
-    try {
-      const res = await apiFetch(`${API_URL}/organizations/${orgId}/products`);
-      const list = await res.json();
-      // Keep the full list (dups and all) so that id-based lookups —
-      // getProductName(campaign.product_id), the campaign header badge —
-      // resolve correctly even when a campaign was bound to a duplicate
-      // row's id. Dropdowns dedupe at their render site instead.
-      setOrgProducts(Array.isArray(list) ? list : []);
-    } catch { /* ignore */ }
-  }, [apiFetch]);
-
-  const fetchOrgs = useCallback(async () => {
-    try {
-      const res = await apiFetch(`${API_URL}/organizations`);
-      const data = await res.json();
-      setOrgs(data);
-      // If the previously selected org is no longer in the allowed list, clear it.
-      if (selectedOrg && !data.find(o => o.id === selectedOrg.id)) {
-        setSelectedOrg(null);
-        setOrgProducts([]);
-      }
-      // Auto-select user's org if only one
-      if (data.length === 1 && !selectedOrg) {
-        setSelectedOrg(data[0]);
-        const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-        if (data[0].timezone) {
-          setOrgTimezone(data[0].timezone);
-        } else {
-          setOrgTimezone(browserTz);
-          apiFetch(`${API_URL}/organizations/${data[0].id}/timezone`, {
-            method: 'PUT', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ timezone: browserTz })
-          }).catch(() => {});
-        }
-        fetchOrgProducts(data[0].id);
-      }
-    } catch { /* ignore */ }
-  }, [apiFetch, selectedOrg, fetchOrgProducts]);
+  const orgId = selectedOrg?.id;
+  const { data: orgProducts = [] } = useOrgProducts(orgId);
 
   // Reset org state when the logged-in user changes or logs out.
   useEffect(() => {
     if (!currentUser) {
-      setOrgs([]);
       setSelectedOrg(null);
-      setOrgProducts([]);
+      setOrgProductsOverride(null);
       setOrgTimezone(Intl.DateTimeFormat().resolvedOptions().timeZone);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser]);
 
-  // Auto-fetch orgs when user is authenticated
+  // Auto-select single org, keep existing selection valid, and sync timezone.
   useEffect(() => {
-    if (currentUser) {
-      fetchOrgs();
+    if (!Array.isArray(orgs) || orgs.length === 0) return;
+
+    if (selectedOrg && !orgs.find(o => o.id === selectedOrg.id)) {
+      setSelectedOrg(null);
+      setOrgProductsOverride(null);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentUser]);
+
+    if (orgs.length === 1 && !selectedOrg) {
+      const org = orgs[0];
+      setSelectedOrg(org);
+      const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      if (org.timezone) {
+        setOrgTimezone(org.timezone);
+      } else {
+        setOrgTimezone(browserTz);
+        apiFetch(`${API_URL}/organizations/${org.id}/timezone`, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ timezone: browserTz })
+        }).catch(() => {});
+      }
+    }
+  }, [orgs, selectedOrg, apiFetch]);
+
+  const fetchOrgs = useCallback(() => {
+    refetchOrgs();
+  }, [refetchOrgs]);
+
+  const fetchOrgProducts = useCallback((id) => {
+    queryClient.invalidateQueries({ queryKey: ['org', id, 'products'] });
+  }, []);
+
+  const setOrgProducts = useCallback((value) => {
+    setOrgProductsOverride(value);
+  }, []);
 
   return (
     <OrgContext.Provider value={{
-      orgs, setOrgs,
+      orgs, setOrgs: () => {},
       selectedOrg, setSelectedOrg,
       orgTimezone, setOrgTimezone,
-      orgProducts, setOrgProducts,
+      orgProducts: orgProductsOverride ?? orgProducts,
+      setOrgProducts,
       fetchOrgs, fetchOrgProducts
     }}>
       {children}

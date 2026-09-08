@@ -328,6 +328,13 @@ func (s *Server) campaignDialAll(w http.ResponseWriter, r *http.Request) {
 		verb = "leads"
 	}
 	s.store.EmitCampaignEvent(r.Context(), campaignID, "Campaign", "", "started", fmt.Sprintf("Queued %d %s for dialing", len(jobs), verb))
+	s.store.PublishDomainEvent(r.Context(), rstore.DomainEvent{
+		Type:       rstore.EventCampaignDialStarted,
+		OrgID:      ac.OrgID,
+		CampaignID: campaignID,
+		Status:     "queued",
+		Detail:     fmt.Sprintf("Queued %d %s for dialing", len(jobs), verb),
+	})
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":  "success",
@@ -442,6 +449,13 @@ func (s *Server) campaignRedialFailed(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.store.EmitCampaignEvent(r.Context(), campaignID, "Campaign", "", "started", fmt.Sprintf("Queued %d failed leads for redial", len(jobs)))
+	s.store.PublishDomainEvent(r.Context(), rstore.DomainEvent{
+		Type:       rstore.EventCampaignDialStarted,
+		OrgID:      ac.OrgID,
+		CampaignID: campaignID,
+		Status:     "queued",
+		Detail:     fmt.Sprintf("Queued %d failed leads for redial", len(jobs)),
+	})
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":  "success",

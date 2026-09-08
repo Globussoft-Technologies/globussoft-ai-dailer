@@ -1,5 +1,6 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useToast } from '../contexts/UIContext';
+import { useAgentReport } from '../hooks/useQueries';
 import UserDetailModal from '../components/modals/UserDetailModal';
 
 const T = {
@@ -127,9 +128,6 @@ function Badge({ children, color = T.accent }) {
 
 export default function AgentReportPage({ apiFetch, API_URL, campaigns = [] }) {
   const toast = useToast();
-  const [members, setMembers] = useState([]);
-  const [rows, setRows] = useState([]);
-  const [loading, setLoading] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [campaignId, setCampaignId] = useState('');
   const [period, setPeriod] = useState('daily');
@@ -166,32 +164,11 @@ export default function AgentReportPage({ apiFetch, API_URL, campaigns = [] }) {
     return { from: day, to: day };
   }, [period, day, month, from, to]);
 
-  useEffect(() => {
-    apiFetch(`${API_URL}/team`)
-      .then(r => r.ok ? r.json() : [])
-      .then(data => setMembers(Array.isArray(data) ? data : []))
-      .catch(() => setMembers([]));
-  }, [apiFetch, API_URL]);
-
-  useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
-      setLoading(true);
-      try {
-        const params = new URLSearchParams({ from: range.from, to: range.to });
-        if (campaignId) params.set('campaign_id', campaignId);
-        const res = await apiFetch(`${API_URL}/analytics/agent-lead-summary?${params.toString()}`);
-        const data = await res.json().catch(() => []);
-        if (!cancelled) setRows(Array.isArray(data) ? data : []);
-      } catch {
-        if (!cancelled) setRows([]);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    };
-    load();
-    return () => { cancelled = true; };
-  }, [apiFetch, API_URL, range.from, range.to, campaignId]);
+  const { data: rows = [], isLoading: loading } = useAgentReport({
+    from: range.from,
+    to: range.to,
+    campaignId: campaignId ? Number(campaignId) : undefined,
+  });
 
   const handleDownload = async () => {
     setDownloading(true);

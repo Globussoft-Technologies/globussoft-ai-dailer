@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useToast, useConfirm } from '../../contexts/UIContext';
+import { useCampaign } from '../../hooks/useQueries';
+import { queryClient } from '../../queryClient';
 import CampaignDetail from '../campaigns/CampaignDetail';
 import CampaignModals from '../campaigns/CampaignModals';
 import { CAMPAIGN_TEMPLATES } from '../../constants/campaignTemplates';
@@ -25,9 +27,6 @@ export default function CampaignsTab({
   const [view, setView] = useState('list'); // 'list' or 'detail'
   const [autoOpened, setAutoOpened] = useState(false);
   const [selectedCampaign, setSelectedCampaign] = useState(null);
-  const [campaignLeads, setCampaignLeads] = useState([]);
-  const [campaignLeadsTotal, setCampaignLeadsTotal] = useState(0);
-  const [callLog, setCallLog] = useState([]);
   const [detailTab, setDetailTab] = useState('leads'); // 'leads' or 'calllog'
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showAddLeadsModal, setShowAddLeadsModal] = useState(false);
@@ -58,6 +57,16 @@ export default function CampaignsTab({
   const [campVoice, setCampVoice] = useState({ tts_provider: '', tts_voice_id: '', tts_language: '' });
   const [campVoiceSaveStatus, setCampVoiceSaveStatus] = useState(''); // '', 'saving', 'saved', 'error'
 
+  // Fetch campaign detail via React Query and merge into selectedCampaign.
+  const { data: campaignDetail } = useCampaign(selectedCampaign?.id);
+  /* eslint-disable react-hooks/exhaustive-deps */
+  useEffect(() => {
+    if (campaignDetail && selectedCampaign) {
+      setSelectedCampaign(prev => (prev ? { ...prev, ...campaignDetail } : prev));
+    }
+  }, [campaignDetail]);
+  /* eslint-enable react-hooks/exhaustive-deps */
+
   // Campaign-user assignment state (Admin only).
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [assignCampaign, setAssignCampaign] = useState(null);
@@ -65,7 +74,6 @@ export default function CampaignsTab({
   const [selectedUserIds, setSelectedUserIds] = useState([]);
   const [assignLoading, setAssignLoading] = useState(false);
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     fetchCampaigns();
     apiFetch(`${API_URL}/exotel-accounts/options`)
@@ -76,7 +84,7 @@ export default function CampaignsTab({
       .then(r => r.json())
       .then(d => setExecutives(Array.isArray(d) ? d : []))
       .catch(() => {});
-  }, []);
+  }, [apiFetch, API_URL, fetchCampaigns]);
 
   useEffect(() => {
     if (!isAdmin(currentUser?.role)) {
@@ -118,6 +126,7 @@ export default function CampaignsTab({
   // Auto-open a specific campaign when navigated from the CRM dashboard.
   // After opening, clear the navigation state so that clicking "Back to Campaigns"
   // shows the list without re-triggering this effect.
+  /* eslint-disable react-hooks/exhaustive-deps */
   useEffect(() => {
     const openId = location.state?.openCampaignId;
     if (!openId || !campaigns?.length) return;
@@ -127,21 +136,22 @@ export default function CampaignsTab({
       navigate('/campaigns', { replace: true, state: {} });
     }
   }, [location.state?.openCampaignId, campaigns]);
+  /* eslint-enable react-hooks/exhaustive-deps */
 
   // If the user leaves the /campaigns/:campaignId route (Back button or manual URL change),
   // reset to list view so the same component instance doesn't keep showing the detail.
+  /* eslint-disable react-hooks/exhaustive-deps */
   useEffect(() => {
     if (!routeCampaignId && view === 'detail') {
       stopEventStream();
       setAutoOpened(false);
       setView('list');
       setSelectedCampaign(null);
-      setCampaignLeads([]);
       setLiveEvents([]);
       fetchCampaigns();
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [routeCampaignId, view]);
+  /* eslint-enable react-hooks/exhaustive-deps */
 
   // Close any active SSE stream when this component unmounts.
   useEffect(() => () => stopEventStream(), []);
@@ -167,8 +177,6 @@ export default function CampaignsTab({
       setSelectedCampaign(target);
       setView('detail');
       setDetailExecutiveFilter([]);
-      fetchCampaignLeads(target.id);
-      fetchCallLog(target.id, []);
       fetchCampVoice(target.id);
       startEventStream(target.id).catch(() => {});
       setDetailTab('leads');
@@ -179,34 +187,13 @@ export default function CampaignsTab({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [routeCampaignId, campaigns, autoOpened]);
 
-  const fetchCampaignLeads = useCallback(async (campaignId, opts = {}) => {
-    try {
-      const params = new URLSearchParams();
-      params.set('page', String(opts.page || 1));
-      params.set('limit', String(opts.limit || 100));
-      if (opts.search) params.set('search', opts.search);
-      if (opts.executiveIds?.length) params.set('executive_ids', opts.executiveIds.join(','));
-      if (opts.scheduledFrom) params.set('scheduled_from', opts.scheduledFrom);
-      if (opts.scheduledTo) params.set('scheduled_to', opts.scheduledTo);
-      const res = await apiFetch(`${API_URL}/campaigns/${campaignId}/leads?${params.toString()}`);
-      if (!res.ok) { setCampaignLeads([]); setCampaignLeadsTotal(0); return; }
-      const data = await res.json();
-      setCampaignLeads(Array.isArray(data.leads) ? data.leads : []);
-      setCampaignLeadsTotal(typeof data.total === 'number' ? data.total : 0);
-    } catch { setCampaignLeads([]); setCampaignLeadsTotal(0); }
-  }, [apiFetch, API_URL]);
+  const fetchCampaignLeads = useCallback((campaignId) => {
+    queryClient.invalidateQueries({ queryKey: ['campaign', campaignId, 'leads'] });
+  }, []);
 
-  const fetchCallLog = async (campaignId, executiveIds = []) => {
-    try {
-      const params = new URLSearchParams();
-      if (executiveIds?.length) params.set('executive_ids', executiveIds.join(','));
-      const query = params.toString() ? `?${params.toString()}` : '';
-      const res = await apiFetch(`${API_URL}/campaigns/${campaignId}/call-log${query}`);
-      if (!res.ok) { setCallLog([]); return; }
-      const data = await res.json();
-      setCallLog(Array.isArray(data) ? data : []);
-    } catch { setCallLog([]);  }
-  };
+  const fetchCallLog = useCallback((campaignId) => {
+    queryClient.invalidateQueries({ queryKey: ['campaign', campaignId, 'callLogs'] });
+  }, []);
 
   const fetchCampaignDetail = async (campaignId) => {
     try {
@@ -262,11 +249,8 @@ export default function CampaignsTab({
       navigate(`/campaigns/${campaign.id}`, { replace: true });
     }
     setDetailExecutiveFilter([]);
-    const detail = await fetchCampaignDetail(campaign.id);
-    setSelectedCampaign(detail ? { ...campaign, ...detail } : campaign);
+    setSelectedCampaign(campaign);
     setView('detail');
-    fetchCampaignLeads(campaign.id);
-    fetchCallLog(campaign.id, []);
     fetchCampVoice(campaign.id);
     startEventStream(campaign.id).catch(() => {});
     setDetailTab('leads');
@@ -277,7 +261,6 @@ export default function CampaignsTab({
     setAutoOpened(false);
     setView('list');
     setSelectedCampaign(null);
-    setCampaignLeads([]);
     setLiveEvents([]);
     if (routeCampaignId) {
       navigate('/campaigns');
@@ -753,9 +736,9 @@ export default function CampaignsTab({
         <CampaignDetail
           selectedCampaign={selectedCampaign}
           setSelectedCampaign={setSelectedCampaign}
-          campaignLeads={campaignLeads}
-          campaignLeadsTotal={campaignLeadsTotal}
-          callLog={callLog}
+          campaignLeads={[]}
+          campaignLeadsTotal={0}
+          callLog={[]}
           detailTab={detailTab}
           setDetailTab={setDetailTab}
           handleBack={handleBack}

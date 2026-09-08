@@ -15,6 +15,7 @@ import (
 
 	"github.com/globussoft/callified-backend/internal/db"
 	"github.com/globussoft/callified-backend/internal/llm"
+	rstore "github.com/globussoft/callified-backend/internal/redis"
 	"github.com/go-sql-driver/mysql"
 )
 
@@ -566,6 +567,12 @@ func (s *Server) updateLeadStatus(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	s.store.PublishDomainEvent(r.Context(), rstore.DomainEvent{
+		Type:   rstore.EventLeadStatusChanged,
+		OrgID:  ac.OrgID,
+		LeadID: id,
+		Status: body.Status,
+	})
 	// Log the status change for agent productivity reporting.
 	if u, uErr := s.db.GetUserByEmail(ac.Email); uErr == nil && u != nil {
 		_ = s.db.LogAgentActivity(u.ID, u.OrgID, 0, id, db.ActivityStatusUpdate, map[string]any{
@@ -839,6 +846,7 @@ func (s *Server) updateLeadDisposition(w http.ResponseWriter, r *http.Request) {
 	if !s.requirePermission(w, r, "crm.edit") {
 		return
 	}
+	ac := getAuth(r)
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
@@ -865,6 +873,12 @@ func (s *Server) updateLeadDisposition(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	s.store.PublishDomainEvent(r.Context(), rstore.DomainEvent{
+		Type:   rstore.EventLeadStatusChanged,
+		OrgID:  ac.OrgID,
+		LeadID: id,
+		Status: strings.TrimSpace(body.Status),
+	})
 	writeJSON(w, http.StatusOK, map[string]bool{"updated": true})
 }
 

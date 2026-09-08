@@ -1131,6 +1131,14 @@ func (h *Handler) finalizeCall(ctx context.Context, sess *CallSession) {
 		name, phone := h.leadLabel(ctx, sess)
 		h.store.EmitCampaignEvent(ctx, sess.CampaignID, name, phone,
 			"completed", fmt.Sprintf("%ds call", durS))
+		// Phase 3: structured domain event for real-time dashboards.
+		h.store.PublishDomainEvent(ctx, rstore.DomainEvent{
+			Type:       rstore.EventCallCompleted,
+			OrgID:      sess.OrgID,
+			CampaignID: sess.CampaignID,
+			LeadID:     sess.LeadID,
+			Duration:   int64(durS),
+		})
 	}
 
 	h.store.CleanupCall(ctx, sess.StreamSid)

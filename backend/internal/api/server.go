@@ -581,6 +581,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/sse/ticket", auth(s.sseTicket))
 	mux.HandleFunc("GET /api/sse/live-logs", s.requireSSETicket(s.liveLogs))
 	mux.HandleFunc("GET /api/live-logs", s.requireSSETicket(s.liveLogs))
+	mux.HandleFunc("GET /api/events", s.requireSSETicket(s.domainEventsSSE))
 	mux.HandleFunc("GET /api/sse/campaign/{id}/events", s.requireSSETicket(s.campaignEvents))
 	mux.HandleFunc("GET /api/campaign-events", s.requireSSETicket(s.campaignEventsQuery))
 	mux.HandleFunc("GET /api/sse/notifications", s.requireSSETicket(s.notificationEvents))
