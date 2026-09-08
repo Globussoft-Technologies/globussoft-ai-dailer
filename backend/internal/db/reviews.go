@@ -3,7 +3,45 @@ package db
 import (
 	"database/sql"
 	"errors"
+	"fmt"
+
+	"github.com/go-sql-driver/mysql"
 )
+
+type schemaExecutor interface {
+	Exec(query string, args ...any) (sql.Result, error)
+}
+
+// EnsureCallReviewColumns applies the schema needed for cross-call memory.
+// It mirrors the standalone migration so normal deployments do not depend on
+// a separate manual migration step.
+func (d *DB) EnsureCallReviewColumns() error {
+	return ensureCallReviewColumns(d.pool)
+}
+
+func ensureCallReviewColumns(exec schemaExecutor) error {
+	if _, err := exec.Exec(`ALTER TABLE call_reviews ADD COLUMN lead_id INT DEFAULT NULL`); err != nil && !isMySQLError(err, 1060) {
+		return fmt.Errorf("add call_reviews.lead_id: %w", err)
+	}
+
+	if _, err := exec.Exec(`
+		UPDATE call_reviews cr
+		JOIN call_transcripts ct ON cr.transcript_id = ct.id
+		SET cr.lead_id = ct.lead_id
+		WHERE cr.lead_id IS NULL AND ct.lead_id IS NOT NULL`); err != nil {
+		return fmt.Errorf("backfill call_reviews.lead_id: %w", err)
+	}
+
+	if _, err := exec.Exec(`ALTER TABLE call_reviews ADD INDEX idx_call_reviews_lead_id (lead_id)`); err != nil && !isMySQLError(err, 1061) {
+		return fmt.Errorf("add call_reviews lead index: %w", err)
+	}
+	return nil
+}
+
+func isMySQLError(err error, number uint16) bool {
+	var mysqlErr *mysql.MySQLError
+	return errors.As(err, &mysqlErr) && mysqlErr.Number == number
+}
 
 // CallReview mirrors the call_reviews table.
 type CallReview struct {

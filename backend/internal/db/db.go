@@ -68,6 +68,9 @@ func New(dsn string) (*DB, error) {
 	if err := d.EnsureCallTranscriptColumns(); err != nil {
 		return nil, fmt.Errorf("db.New: ensure call transcript columns: %w", err)
 	}
+	if err := d.EnsureCallReviewColumns(); err != nil {
+		return nil, fmt.Errorf("db.New: ensure call review columns: %w", err)
+	}
 	if err := d.EnsureAPIKeysTable(); err != nil {
 		return nil, fmt.Errorf("db.New: ensure API keys table: %w", err)
 	}
