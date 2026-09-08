@@ -17,11 +17,12 @@ export function CallProvider({ children }) {
 
   const [dialingId, setDialingId] = useState(null);
   const [webCallActive, setWebCallActive] = useState(null);
-  // rechargePrompt holds the backend's "insufficient credits" message when
+  // rechargePrompt holds the backend's billing/recharge message when
   // a 402 comes back from the dial endpoints. Rendered as a themed modal
   // (matches the app's dark glass-panel UI) instead of the native browser
   // confirm() dialog, which used the OS theme and looked out of place.
   const [rechargePrompt, setRechargePrompt] = useState(null);
+  const [minuteBalancePrompt, setMinuteBalancePrompt] = useState(null);
   const webCallWsRef = useRef(null);
   const webCallAudioCtxRef = useRef(null);
 
@@ -71,6 +72,13 @@ export function CallProvider({ children }) {
   }, []);
   const dueScheduledCalls = useMemo(() => dueManualCalls.filter(c => !dismissedIds.has(c.id)), [dueManualCalls, dismissedIds]);
   const browserCallEndedCbRef = useRef(null);
+  const showBillingPrompt = useCallback((msg) => {
+    if (/minute balance|credits? exhausted/i.test(msg || '')) {
+      setMinuteBalancePrompt(msg);
+    } else {
+      setRechargePrompt(msg);
+    }
+  }, []);
 
   const handleDial = useCallback(async (lead) => {
     setDialingId(lead.id);
@@ -80,7 +88,7 @@ export function CallProvider({ children }) {
       if (!res.ok) {
         const msg = data.error || `Dial failed (HTTP ${res.status})`;
         if (res.status === 402) {
-          setRechargePrompt(msg);
+          showBillingPrompt(msg);
         } else {
           alert(msg);
         }
@@ -90,7 +98,7 @@ export function CallProvider({ children }) {
     } catch { alert("Failed to hit the dialer API. Check console.");
      }
     setTimeout(() => setDialingId(null), 10000);
-  }, [apiFetch]);
+  }, [apiFetch, showBillingPrompt]);
 
   const handleWebCall = useCallback(async (lead) => {
     if (webCallActive === lead.id) {
@@ -295,14 +303,14 @@ export function CallProvider({ children }) {
         body: JSON.stringify({ exotel_account_id: accountId || 0 }),
       });
       if (!res.ok) {
-        // Surface the backend error so silent failures (especially the
-        // 402 "insufficient credits" gate) don't look like nothing happened.
+        // Surface the backend error so silent failures, especially the
+        // minute-balance gate, don't look like nothing happened.
         const body = await res.json().catch(() => ({}));
         const msg = body.error || `Dial failed (HTTP ${res.status})`;
         if (res.status === 402) {
-          // Insufficient credits — show the themed recharge modal instead
+          // Show the themed billing modal instead
           // of native confirm() (which renders in the OS theme and clashes).
-          setRechargePrompt(msg);
+          showBillingPrompt(msg);
         } else if (/dnd/i.test(msg)) {
           // DND blocks already render an inline "🚫 DND — number blocked"
           // badge on the row + a transient flash from handleDialClick.
@@ -315,7 +323,7 @@ export function CallProvider({ children }) {
       alert('Network error: ' + (e?.message || 'unknown'));
     }
     setTimeout(() => setDialingId(null), 10000);
-  }, [apiFetch, getBrowserAccountId]);
+  }, [apiFetch, getBrowserAccountId, showBillingPrompt]);
 
   const ensureMicrophoneAvailable = useCallback(async () => {
     if (!navigator.mediaDevices?.getUserMedia) {
@@ -368,7 +376,14 @@ export function CallProvider({ children }) {
         }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || `Browser call failed (HTTP ${res.status})`);
+      if (!res.ok) {
+        const msg = data.error || `Browser call failed (HTTP ${res.status})`;
+        if (res.status === 402) {
+          showBillingPrompt(msg);
+          return false;
+        }
+        throw new Error(msg);
+      }
       setBrowserCallSid(data.call_sid || data.sid);
       return true;
     } catch (e) {
@@ -381,7 +396,7 @@ export function CallProvider({ children }) {
     } finally {
       setBrowserCallDialing(false);
     }
-  }, [apiFetch, toast, getBrowserAccountId, ensureMicrophoneAvailable]);
+  }, [apiFetch, toast, getBrowserAccountId, ensureMicrophoneAvailable, showBillingPrompt]);
 
   const closeBrowserCall = useCallback(() => {
     browserCallEndedCbRef.current = null;
@@ -508,6 +523,7 @@ export function CallProvider({ children }) {
         tts_provider: campVoice.tts_provider || activeVoiceProvider,
         voice: campVoice.tts_voice_id || activeVoiceId,
         tts_language: campVoice.tts_language || activeLanguage,
+        max_call_duration_seconds: String(campVoice.max_call_duration_seconds || 0),
         campaign_id: String(campaignId),
       }).toString();
 
@@ -710,54 +726,101 @@ export function CallProvider({ children }) {
 
       {rechargePrompt && (
         <div onClick={() => setRechargePrompt(null)} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }} style={{
-          position: 'fixed', inset: 0, background: 'rgba(2,6,23,0.75)',
+          position: 'fixed', inset: 0, background: 'rgba(17,24,39,0.45)',
           backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center',
           justifyContent: 'center', zIndex: 10000, padding: '1rem'
         }}>
           <div onClick={e => e.stopPropagation()} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }} style={{
             maxWidth: '440px', width: '100%', padding: '1.75rem',
-            background: '#0f172a',
-            border: '1px solid rgba(239,68,68,0.3)',
+            background: '#ffffff',
+            border: '1px solid rgba(99,102,241,0.28)',
+            borderTop: '4px solid #6366f1',
             borderRadius: '12px',
-            boxShadow: '0 24px 48px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.04) inset',
-            color: '#e2e8f0',
+            boxShadow: '0 24px 48px rgba(15,23,42,0.18)',
+            color: '#111827',
           }}>
-            <div style={{display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '14px'}}>
+            <div style={{display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '20px'}}>
               <div style={{
                 width: '40px', height: '40px', borderRadius: '50%',
-                background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)',
+                background: 'rgba(99,102,241,0.10)', border: '2px solid rgba(99,102,241,0.35)',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 fontSize: '1.2rem',
               }}>⚠️</div>
               <div>
-                <h3 style={{margin: 0, fontSize: '1.05rem', fontWeight: 700, color: '#fca5a5'}}>Recharge Required</h3>
-                <div style={{fontSize: '0.75rem', color: '#94a3b8', marginTop: '2px'}}>Outbound calls are paused</div>
+                <h3 style={{margin: 0, fontSize: '1.05rem', fontWeight: 700, color: '#111827'}}>Recharge Required</h3>
+                <div style={{fontSize: '0.75rem', color: '#6b7280', marginTop: '2px'}}>Outbound calls are paused</div>
               </div>
             </div>
             <p style={{
               margin: '0 0 18px 0', fontSize: '0.9rem', lineHeight: 1.55,
-              color: '#cbd5e1',
+              color: '#374151', padding: '12px 14px', background: '#f8fafc',
+              border: '1px solid #e5e7eb', borderRadius: '8px',
             }}>
               {rechargePrompt}
             </p>
             <p style={{
-              margin: '0 0 20px 0', fontSize: '0.85rem', color: '#94a3b8',
+              margin: '0 0 20px 0', fontSize: '0.85rem', color: '#6b7280',
             }}>
-              Open <strong style={{color: '#a5b4fc'}}>Billing</strong> to add call credits and continue dialing.
+              Open <strong style={{color: '#6366f1'}}>Billing</strong> to add call credits and continue dialing.
             </p>
             <div style={{display: 'flex', gap: '10px', justifyContent: 'flex-end'}}>
               <button onClick={() => setRechargePrompt(null)} style={{
                 padding: '8px 16px', borderRadius: '8px', cursor: 'pointer',
-                background: 'rgba(255,255,255,0.04)',
-                border: '1px solid rgba(148,163,184,0.2)',
-                color: '#cbd5e1', fontSize: '0.85rem', fontWeight: 600,
+                background: '#ffffff',
+                border: '1px solid #d1d5db',
+                color: '#374151', fontSize: '0.85rem', fontWeight: 600,
               }}>Cancel</button>
               <button onClick={() => { setRechargePrompt(null); window.location.assign('/billing'); }} style={{
                 padding: '8px 18px', borderRadius: '8px', cursor: 'pointer',
-                background: 'linear-gradient(135deg, #6366f1, #22d3ee)',
-                border: 'none', color: '#fff', fontSize: '0.85rem', fontWeight: 700,
-                boxShadow: '0 6px 16px rgba(99,102,241,0.35)',
+                background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
+                border: '1px solid rgba(99,102,241,0.55)', color: '#fff', fontSize: '0.85rem', fontWeight: 700,
+                boxShadow: '0 6px 16px rgba(99,102,241,0.25)',
               }}>Open Billing →</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {minuteBalancePrompt && (
+        <div onClick={() => setMinuteBalancePrompt(null)} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }} style={{
+          position: 'fixed', inset: 0, background: 'rgba(17,24,39,0.45)',
+          backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center',
+          justifyContent: 'center', zIndex: 10000, padding: '1rem'
+        }}>
+          <div onClick={e => e.stopPropagation()} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }} style={{
+            maxWidth: '400px', width: '100%', padding: '1.75rem',
+            background: '#ffffff',
+            border: '1px solid rgba(99,102,241,0.28)',
+            borderTop: '4px solid #6366f1',
+            borderRadius: '12px',
+            boxShadow: '0 24px 48px rgba(15,23,42,0.18)',
+            color: '#111827',
+          }}>
+            <div style={{display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '14px'}}>
+              <div style={{
+                width: '40px', height: '40px', borderRadius: '50%',
+                background: 'rgba(99,102,241,0.10)', border: '2px solid rgba(99,102,241,0.35)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: '1.2rem',
+              }}>⚠️</div>
+              <div>
+                <div style={{fontSize: '1.05rem', color: '#111827', fontWeight: 700}}>{minuteBalancePrompt}</div>
+              </div>
+            </div>
+            <p style={{
+              margin: '0 0 20px 0', fontSize: '0.9rem', lineHeight: 1.55,
+              color: '#374151', padding: '12px 14px', background: '#f8fafc',
+              border: '1px solid #e5e7eb', borderRadius: '8px',
+            }}>
+              Please recharge to continue
+            </p>
+            <div style={{display: 'flex', gap: '10px', justifyContent: 'flex-end'}}>
+              <button onClick={() => setMinuteBalancePrompt(null)} style={{
+                padding: '8px 18px', borderRadius: '8px', cursor: 'pointer',
+                background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
+                border: '1px solid rgba(99,102,241,0.55)', color: '#fff', fontSize: '0.85rem', fontWeight: 700,
+                boxShadow: '0 6px 16px rgba(99,102,241,0.25)',
+              }}>OK</button>
             </div>
           </div>
         </div>

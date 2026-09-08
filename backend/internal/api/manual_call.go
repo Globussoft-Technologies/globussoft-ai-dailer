@@ -101,22 +101,23 @@ func (s *Server) manualCall(w http.ResponseWriter, r *http.Request) {
 		}
 		vs, _ = s.db.GetCampaignVoiceSettings(body.CampaignID)
 	}
-	provider, voiceID, lang := extractVoice(vs)
+	provider, voiceID, lang, maxCallDurationSeconds := extractVoice(vs)
 
 	switch mode {
 	case "dial":
 		data := dial.CallData{
-			LeadID:      0,
-			LeadName:    body.Name,
-			LeadPhone:   body.Phone,
-			CampaignID:  body.CampaignID,
-			OrgID:       ac.OrgID,
-			Interest:    interest,
-			TTSProvider: provider,
-			TTSVoiceID:  voiceID,
-			TTSLanguage: lang,
-			UserEmail:   ac.Email,
-			UserID:      userIDForDial(ac),
+			LeadID:                 0,
+			LeadName:               body.Name,
+			LeadPhone:              body.Phone,
+			CampaignID:             body.CampaignID,
+			OrgID:                  ac.OrgID,
+			Interest:               interest,
+			TTSProvider:            provider,
+			TTSVoiceID:             voiceID,
+			TTSLanguage:            lang,
+			MaxCallDurationSeconds: maxCallDurationSeconds,
+			UserEmail:              ac.Email,
+			UserID:                 userIDForDial(ac),
 		}
 		callSid, err := s.initiator.Initiate(r.Context(), data)
 		if err != nil {
@@ -140,16 +141,17 @@ func (s *Server) manualCall(w http.ResponseWriter, r *http.Request) {
 		// Pre-register a pending call so the wshandler can hydrate the
 		// session as soon as the browser opens /media-stream.
 		pending := rstore.PendingCallInfo{
-			Name:        body.Name,
-			Phone:       body.Phone,
-			OrgID:       ac.OrgID,
-			Interest:    interest,
-			CampaignID:  body.CampaignID,
-			TTSProvider: provider,
-			TTSVoiceID:  voiceID,
-			TTSLanguage: lang,
-			UserEmail:   ac.Email,
-			UserID:      ac.UserID,
+			Name:                   body.Name,
+			Phone:                  body.Phone,
+			OrgID:                  ac.OrgID,
+			Interest:               interest,
+			CampaignID:             body.CampaignID,
+			TTSProvider:            provider,
+			TTSVoiceID:             voiceID,
+			TTSLanguage:            lang,
+			MaxCallDurationSeconds: maxCallDurationSeconds,
+			UserEmail:              ac.Email,
+			UserID:                 ac.UserID,
 		}
 		_ = s.store.SetPendingCall(r.Context(), "latest", pending)
 		_ = s.store.SetPendingCall(r.Context(), "phone:"+body.Phone, pending)
@@ -166,7 +168,7 @@ func (s *Server) manualCall(w http.ResponseWriter, r *http.Request) {
 // extractVoice pulls TTS fields off the opaque vs value returned by
 // db.GetCampaignVoiceSettings without creating an import cycle. Uses JSON
 // round-trip rather than importing the db package's internal type.
-func extractVoice(vs any) (provider, voiceID, lang string) {
+func extractVoice(vs any) (provider, voiceID, lang string, maxCallDurationSeconds int) {
 	if vs == nil {
 		return
 	}
@@ -175,12 +177,13 @@ func extractVoice(vs any) (provider, voiceID, lang string) {
 		return
 	}
 	var parsed struct {
-		TTSProvider string `json:"tts_provider"`
-		TTSVoiceID  string `json:"tts_voice_id"`
-		TTSLanguage string `json:"tts_language"`
+		TTSProvider            string `json:"tts_provider"`
+		TTSVoiceID             string `json:"tts_voice_id"`
+		TTSLanguage            string `json:"tts_language"`
+		MaxCallDurationSeconds int    `json:"max_call_duration_seconds"`
 	}
 	if err := json.Unmarshal(buf, &parsed); err != nil {
 		return
 	}
-	return parsed.TTSProvider, parsed.TTSVoiceID, parsed.TTSLanguage
+	return parsed.TTSProvider, parsed.TTSVoiceID, parsed.TTSLanguage, parsed.MaxCallDurationSeconds
 }

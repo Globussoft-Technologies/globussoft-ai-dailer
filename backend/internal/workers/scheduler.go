@@ -76,15 +76,16 @@ func (s *Scheduler) tick(ctx context.Context) {
 
 		vs, _ := s.db.GetCampaignVoiceSettings(sc.CampaignID)
 		data := dial.CallData{
-			LeadID:      lead.ID,
-			LeadName:    lead.FirstName + " " + lead.LastName,
-			LeadPhone:   lead.Phone,
-			CampaignID:  sc.CampaignID,
-			OrgID:       sc.OrgID,
-			Interest:    lead.Interest,
-			TTSProvider: vs.TTSProvider,
-			TTSVoiceID:  vs.TTSVoiceID,
-			TTSLanguage: vs.TTSLanguage,
+			LeadID:                 lead.ID,
+			LeadName:               lead.FirstName + " " + lead.LastName,
+			LeadPhone:              lead.Phone,
+			CampaignID:             sc.CampaignID,
+			OrgID:                  sc.OrgID,
+			Interest:               lead.Interest,
+			TTSProvider:            vs.TTSProvider,
+			TTSVoiceID:             vs.TTSVoiceID,
+			TTSLanguage:            vs.TTSLanguage,
+			MaxCallDurationSeconds: vs.MaxCallDurationSeconds,
 		}
 
 		if _, err := s.initiator.Initiate(ctx, data); err != nil {

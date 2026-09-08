@@ -221,7 +221,7 @@ func (d *DB) GetUserExotelAccountByID(id, userID, orgID int64) (*OrgExotelAccoun
 		FROM org_exotel_accounts WHERE id=? AND user_id=? AND org_id=?`, id, userID, orgID).
 		Scan(&a.ID, &a.OrgID, &uid, &a.Provider, &a.Name, &a.APIKey, &a.APIToken,
 			&a.APISecret, &a.AccountSID, &a.CallerID, &a.AppID, &a.AppType,
-			&a.Region, &a.Subdomain, &a.CreatedAt)
+			&a.Direction, &a.Region, &a.Subdomain, &a.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -235,14 +235,17 @@ func (d *DB) GetUserExotelAccountByID(id, userID, orgID int64) (*OrgExotelAccoun
 }
 
 // CreateUserExotelAccount inserts a user-owned provider account and returns its ID.
-func (d *DB) CreateUserExotelAccount(userID, orgID int64, provider, name, apiKey, apiToken, apiSecret, accountSID, callerID, appID, appType, region, subdomain string) (int64, error) {
+func (d *DB) CreateUserExotelAccount(userID, orgID int64, provider, name, apiKey, apiToken, apiSecret, accountSID, callerID, appID, appType, direction, region, subdomain string) (int64, error) {
 	if appType == "" {
 		appType = "exoml"
 	}
+	if direction == "" {
+		direction = "outbound"
+	}
 	res, err := d.pool.Exec(`
-		INSERT INTO org_exotel_accounts (org_id, user_id, provider, name, api_key, api_token, api_secret, account_sid, caller_id, app_id, app_type, region, subdomain)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		orgID, userID, provider, name, apiKey, apiToken, apiSecret, accountSID, callerID, appID, appType, region, subdomain)
+		INSERT INTO org_exotel_accounts (org_id, user_id, provider, name, api_key, api_token, api_secret, account_sid, caller_id, app_id, app_type, direction, region, subdomain)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		orgID, userID, provider, name, apiKey, apiToken, apiSecret, accountSID, callerID, appID, appType, direction, region, subdomain)
 	if err != nil {
 		return 0, err
 	}
@@ -250,15 +253,18 @@ func (d *DB) CreateUserExotelAccount(userID, orgID int64, provider, name, apiKey
 }
 
 // UpdateUserExotelAccount updates all mutable fields on a user-owned account.
-func (d *DB) UpdateUserExotelAccount(id, userID, orgID int64, provider, name, apiKey, apiToken, apiSecret, accountSID, callerID, appID, appType, region, subdomain string) error {
+func (d *DB) UpdateUserExotelAccount(id, userID, orgID int64, provider, name, apiKey, apiToken, apiSecret, accountSID, callerID, appID, appType, direction, region, subdomain string) error {
 	if appType == "" {
 		appType = "exoml"
 	}
+	if direction == "" {
+		direction = "outbound"
+	}
 	_, err := d.pool.Exec(`
 		UPDATE org_exotel_accounts
-		SET provider=?, name=?, api_key=?, api_token=?, api_secret=?, account_sid=?, caller_id=?, app_id=?, app_type=?, region=?, subdomain=?
+		SET provider=?, name=?, api_key=?, api_token=?, api_secret=?, account_sid=?, caller_id=?, app_id=?, app_type=?, direction=?, region=?, subdomain=?
 		WHERE id=? AND user_id=? AND org_id=?`,
-		provider, name, apiKey, apiToken, apiSecret, accountSID, callerID, appID, appType, region, subdomain, id, userID, orgID)
+		provider, name, apiKey, apiToken, apiSecret, accountSID, callerID, appID, appType, direction, region, subdomain, id, userID, orgID)
 	return err
 }
 
@@ -278,7 +284,7 @@ func (d *DB) GetExotelAccountByIDInOrg(id, orgID int64) (*OrgExotelAccount, erro
 		FROM org_exotel_accounts WHERE id=? AND org_id=?`, id, orgID).
 		Scan(&a.ID, &a.OrgID, &userID, &a.Provider, &a.Name, &a.APIKey, &a.APIToken,
 			&a.APISecret, &a.AccountSID, &a.CallerID, &a.AppID, &a.AppType,
-			&a.Region, &a.Subdomain, &a.CreatedAt)
+			&a.Direction, &a.Region, &a.Subdomain, &a.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -382,6 +388,7 @@ func (d *DB) GetUserExotelAccountCreds(userID, orgID int64) (ExotelCreds, error)
 		CallerID:   a.CallerID,
 		AppID:      a.AppID,
 		AppType:    a.AppType,
+		Direction:  a.Direction,
 		Region:     a.Region,
 		Subdomain:  a.Subdomain,
 	}, nil
@@ -402,6 +409,7 @@ func accountToCreds(a *OrgExotelAccount) ExotelCreds {
 		CallerID:   a.CallerID,
 		AppID:      a.AppID,
 		AppType:    a.AppType,
+		Direction:  a.Direction,
 		Region:     a.Region,
 		Subdomain:  a.Subdomain,
 	}

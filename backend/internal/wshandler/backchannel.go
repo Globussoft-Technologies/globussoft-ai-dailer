@@ -9,19 +9,22 @@ import (
 // syllables). These are dropped before reaching the pipeline so the agent
 // keeps waiting for a real customer reply.
 var fillerSounds = map[string]struct{}{
-	"hu": {}, "ha": {}, "haa": {}, "hah": {},
-	"hm": {}, "hmm": {}, "hmmm": {},
-	"ah": {}, "ahh": {}, "aah": {},
-	"oh": {}, "ohh": {},
-	"uh": {}, "uhh": {},
+	"hu": {}, "ha": {}, "haa": {}, "hah": {}, "haha": {},
+	"hm": {}, "hmm": {}, "hmmm": {}, "hmmmm": {},
+	"mm": {}, "mmm": {}, "mmmm": {},
+	"mhm": {}, "mmhmm": {}, "mhmhm": {},
+	"ah": {}, "ahh": {}, "aah": {}, "aahh": {},
+	"oh": {}, "ohh": {}, "ooh": {},
+	"uh": {}, "uhh": {}, "uhm": {},
 	"um": {}, "umm": {}, "ummm": {},
+	"er": {}, "err": {},
 	"ugh": {},
-	"eh": {}, "ehh": {},
+	"eh":  {}, "ehh": {},
 	"ow": {},
 	// Indian-language equivalents
-	"haan": {}, "han": {},
-	"ho": {},
-	"hn": {},
+	"hn": {}, "hunn": {},
+	"హమ్": {}, "హ్మ్": {}, "ఉమ్": {}, "అమ్": {},
+	"ह्म्म": {}, "हम्म": {}, "उम्": {}, "अम्": {},
 }
 
 // isFillerSound returns true when the entire transcript is a single short
@@ -31,24 +34,34 @@ func isFillerSound(text string) bool {
 	if len(words) != 1 {
 		return false // multi-word transcripts are always real speech
 	}
-	word := strings.Trim(words[0], ".,!?…")
+	word := normalizeFillerWord(words[0])
+	if word == "" {
+		return strings.TrimSpace(text) != ""
+	}
 	if _, ok := fillerSounds[word]; ok {
 		return true
 	}
-	// Also drop any single word that is 1–2 characters — too short to be intent.
-	return len([]rune(word)) <= 2
+	return false
 }
 
 // isKnownFiller returns true only when the text exactly matches a known filler
 // sound. Unlike isFillerSound, it does not drop short partial words like "he"
 // or "my", which are often the beginning of a real interruption.
 func isKnownFiller(text string) bool {
-	word := strings.ToLower(strings.TrimSpace(text))
-	word = strings.Trim(word, ".,!?…")
+	word := normalizeFillerWord(text)
+	if word == "" {
+		return strings.TrimSpace(text) != ""
+	}
 	_, ok := fillerSounds[word]
 	return ok
 }
 
+func normalizeFillerWord(text string) string {
+	word := strings.ToLower(strings.TrimSpace(text))
+	word = strings.Trim(word, ".,!?…:;\"'`()[]{}")
+	replacer := strings.NewReplacer("-", "", "_", "", " ", "", "'", "", "’", "")
+	return replacer.Replace(word)
+}
 
 // explicitSwitchKeywords maps target language codes to phrases that unambiguously
 // request a language switch, regardless of what Sarvam detects as the language.
@@ -138,4 +151,3 @@ func isExplicitLangSwitch(text string) (targetLang string, ok bool) {
 	}
 	return "", false
 }
-

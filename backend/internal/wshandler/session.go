@@ -14,6 +14,7 @@ import (
 
 	"github.com/globussoft/callified-backend/internal/audio"
 	"github.com/globussoft/callified-backend/internal/llm"
+	"github.com/globussoft/callified-backend/internal/metrics"
 	"github.com/globussoft/callified-backend/internal/tts"
 )
 
@@ -67,6 +68,11 @@ type CallSession struct {
 	ttsPlaying           atomic.Bool
 	hangupReq            atomic.Bool
 	dgAlive              atomic.Bool
+	maxDurationStarted   atomic.Bool
+	maxDurationSoftClose atomic.Bool
+	maxDurationWaitReply atomic.Bool
+	maxDurationClosing   atomic.Bool
+	finalCloseReq        atomic.Bool
 	bargeInActive        atomic.Bool  // set by VAD-detected speech during TTS; cleared when new LLM response starts
 	bargeInPending       atomic.Bool  // true while waiting for STT confirmation of a barge-in
 	bargeInDeadline      atomic.Int64 // UnixNano; STT must confirm by this time
@@ -114,14 +120,19 @@ type CallSession struct {
 	historyMu   sync.Mutex
 	ChatHistory []llm.ChatMessage
 
+	// Recent customer utterances used to keep repeated questions from looping.
+	repeatMu        sync.Mutex
+	recentQuestions []repeatQuestion
+
 	// Voice config — populated after InitializeCall gRPC returns
-	SystemPrompt string
-	GreetingText string
-	TTSProvider  string
-	TTSVoiceID   string
-	TTSLanguage  string
-	AgentName    string
-	Language     string
+	SystemPrompt           string
+	GreetingText           string
+	TTSProvider            string
+	TTSVoiceID             string
+	TTSLanguage            string
+	MaxCallDurationSeconds int
+	AgentName              string
+	Language               string
 
 	// Deferred-init hooks. Real Exotel calls connect with empty URL params
 	// (the campaign context arrives later via the Redis "start" event), so
@@ -356,6 +367,37 @@ func (s *CallSession) SetTTSPlaying(v bool)  { s.ttsPlaying.Store(v) }
 func (s *CallSession) IsTTSPlaying() bool    { return s.ttsPlaying.Load() }
 func (s *CallSession) RequestHangup()        { s.hangupReq.Store(true) }
 func (s *CallSession) HangupRequested() bool { return s.hangupReq.Load() }
+func (s *CallSession) TryStartMaxDurationTimer() bool {
+	return s.maxDurationStarted.CompareAndSwap(false, true)
+}
+func (s *CallSession) RequestMaxDurationSoftClose() { s.maxDurationSoftClose.Store(true) }
+func (s *CallSession) IsMaxDurationSoftClosing() bool {
+	return s.maxDurationSoftClose.Load()
+}
+func (s *CallSession) RequestMaxDurationWaitReply() {
+	s.maxDurationSoftClose.Store(true)
+	s.maxDurationWaitReply.Store(true)
+}
+func (s *CallSession) ConsumeMaxDurationWaitReply() bool {
+	return s.maxDurationWaitReply.CompareAndSwap(true, false)
+}
+func (s *CallSession) RequestMaxDurationClose() {
+	s.maxDurationSoftClose.Store(true)
+	s.maxDurationWaitReply.Store(false)
+	s.maxDurationClosing.Store(true)
+	s.RequestHangup()
+}
+func (s *CallSession) IsMaxDurationClosing() bool { return s.maxDurationClosing.Load() }
+func (s *CallSession) RequestFinalClose() {
+	s.finalCloseReq.Store(true)
+	s.maxDurationWaitReply.Store(false)
+	s.SetBargeInPending(false)
+	s.SetBargeIn(false)
+	s.RequestHangup()
+}
+func (s *CallSession) IsFinalClosing() bool {
+	return s.finalCloseReq.Load() || s.IsMaxDurationClosing()
+}
 func (s *CallSession) StopDG()               { s.dgAlive.Store(false) }
 func (s *CallSession) DGAlive() bool         { return s.dgAlive.Load() }
 func (s *CallSession) SetBargeIn(v bool)     { s.bargeInActive.Store(v) }
@@ -373,7 +415,13 @@ func (s *CallSession) TriggerBargeIn() bool {
 	if !s.lastBargeInNano.CompareAndSwap(last, now) {
 		return false // another goroutine won the race
 	}
+	s.interruptActiveTTS()
+	return true
+}
+
+func (s *CallSession) interruptActiveTTS() {
 	s.SetBargeIn(true)
+	metrics.BargeIns.Inc()
 	s.DrainTTSSentences()
 	go func() {
 		time.Sleep(3 * time.Second)
@@ -387,10 +435,9 @@ func (s *CallSession) TriggerBargeIn() bool {
 	} else if s.IsExotel {
 		frame, _ = json.Marshal(map[string]string{"event": "clear", "streamSid": s.StreamSid})
 	}
-	if frame != nil {
+	if frame != nil && s.WS != nil {
 		_ = s.SendText(frame)
 	}
-	return true
 }
 
 // TryBargeIn attempts to trigger a tentative barge-in when customer speech is
@@ -398,6 +445,9 @@ func (s *CallSession) TriggerBargeIn() bool {
 // be playing or recently finished (within 800ms of TTS end or 2000ms of last
 // audio sent), and it respects the cooldown/active/pending guards.
 func (s *CallSession) TryBargeIn(source string) bool {
+	if s.IsFinalClosing() {
+		return false
+	}
 	recentTTS := s.IsTTSPlaying() || s.MsSinceTTSEnd() < 800 || s.MsSinceAudioSent() < 2000
 	if !recentTTS || s.IsBargeInActive() || s.IsBargeInPending() {
 		return false
@@ -426,7 +476,12 @@ func (s *CallSession) BargeInDeadline() int64 { return s.bargeInDeadline.Load() 
 // STT must confirm the interruption with a real transcript within 4s;
 // otherwise the barge-in is automatically cancelled so the AI can continue.
 func (s *CallSession) TentativeTriggerBargeIn() bool {
-	if !s.TriggerBargeIn() {
+	now := time.Now().UnixNano()
+	last := s.lastBargeInNano.Load()
+	if now-last < 500*int64(time.Millisecond) {
+		return false
+	}
+	if !s.lastBargeInNano.CompareAndSwap(last, now) {
 		return false
 	}
 	s.SetBargeInPending(true)
@@ -451,6 +506,12 @@ func (s *CallSession) ConfirmBargeIn() bool {
 	if !s.bargeInPending.CompareAndSwap(true, false) {
 		return false
 	}
+	if s.IsFinalClosing() {
+		s.SetBargeIn(false)
+		s.Log.Info("barge-in: ignored during final close")
+		return true
+	}
+	s.interruptActiveTTS()
 	s.confirmedBargeInNano.Store(time.Now().UnixNano())
 	if s.HangupRequested() {
 		s.hangupReq.Store(false)
@@ -659,11 +720,11 @@ func (s *CallSession) MaxTokens(transcript string) int32 {
 		return tokens
 	}
 
-	perWord, minTok, maxTok := int32(20), int32(150), int32(400)
+	perWord, minTok, maxTok := int32(20), int32(250), int32(450)
 	if !isEnglish {
-		perWord = 30
-		minTok = 250
-		maxTok = 900
+		perWord = 24
+		minTok = 320
+		maxTok = 550
 	}
 	words := len(strings.Fields(transcript))
 	tokens := int32(words) * perWord

@@ -50,7 +50,7 @@ func NewSarvamClient(apiKey string, log *zap.Logger) *SarvamClient {
 // VAD constants for 8 kHz 16-bit mono PCM (20 ms frames = 320 bytes).
 const (
 	sarvamSpeechThreshold = 300_000 // mean-square energy; ~RMS 548
-	sarvamSilenceFrames   = 20      // 400 ms of silence ends an utterance
+	sarvamSilenceFrames   = 15      // 300 ms of silence ends an utterance
 	sarvamMinSpeechBytes  = 4800    // 300 ms minimum speech (avoid noise pops)
 	sarvamMaxSpeechBytes  = 160000  // 10 s maximum utterance
 )
@@ -281,13 +281,13 @@ func sarvamBuildWAV(pcm []byte) []byte {
 	write(uint32(36 + dataLen))
 	buf.WriteString("WAVE")
 	buf.WriteString("fmt ")
-	write(uint32(16))        // subchunk size
-	write(uint16(1))         // PCM
-	write(uint16(1))         // channels
-	write(uint32(8000))      // sample rate
-	write(uint32(8000 * 2))  // byte rate
-	write(uint16(2))         // block align
-	write(uint16(16))        // bits per sample
+	write(uint32(16))       // subchunk size
+	write(uint16(1))        // PCM
+	write(uint16(1))        // channels
+	write(uint32(8000))     // sample rate
+	write(uint32(8000 * 2)) // byte rate
+	write(uint16(2))        // block align
+	write(uint16(16))       // bits per sample
 	buf.WriteString("data")
 	write(dataLen)
 	buf.Write(pcm)

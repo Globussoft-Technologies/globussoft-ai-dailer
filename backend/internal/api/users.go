@@ -137,7 +137,7 @@ func (s *Server) maybeCreateUserProviderAccount(userID, orgID int64, pa *provide
 	}
 	_, _ = s.db.CreateUserExotelAccount(userID, orgID, pa.Provider,
 		strings.TrimSpace(pa.Name), pa.APIKey, pa.APIToken, pa.APISecret,
-		pa.AccountSID, pa.CallerID, pa.AppID, pa.AppType, pa.Region, pa.Subdomain)
+		pa.AccountSID, pa.CallerID, pa.AppID, pa.AppType, pa.Direction, pa.Region, pa.Subdomain)
 }
 
 // ── PUT /api/users/{id} ──────────────────────────────────────────────────────

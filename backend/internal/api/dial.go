@@ -16,7 +16,7 @@ import (
 )
 
 // dialErrorStatus maps a dial.Initiator error to the right HTTP status code
-// so the frontend can distinguish "billing problem — show recharge prompt"
+// so the frontend can distinguish "minute balance completed — show popup"
 // from a generic provider failure. Sentinel errors live in package dial.
 func dialErrorStatus(err error) int {
 	switch {
@@ -53,7 +53,7 @@ func userIDForDial(ac AuthClaims) int64 {
 // @Param       body     body      object{campaign_id=int64}   false  "Optional campaign context"
 // @Success     200   {object}  BoolResponse
 // @Failure     400   {object}  ErrorResponse
-// @Failure     402   {object}  ErrorResponse  "insufficient credits"
+// @Failure     402   {object}  ErrorResponse  "minute balance completed"
 // @Failure     404   {object}  ErrorResponse
 // @Failure     409   {object}  ErrorResponse  "DND or outside call hours"
 // @Failure     502   {object}  ErrorResponse  "provider error"
@@ -98,17 +98,18 @@ func (s *Server) dialLead(w http.ResponseWriter, r *http.Request) {
 	vs, _ := s.db.GetCampaignVoiceSettings(body.CampaignID)
 
 	data := dial.CallData{
-		LeadID:      lead.ID,
-		LeadName:    lead.FirstName + " " + lead.LastName,
-		LeadPhone:   lead.Phone,
-		CampaignID:  body.CampaignID,
-		OrgID:       ac.OrgID,
-		Interest:    lead.Interest,
-		TTSProvider: vs.TTSProvider,
-		TTSVoiceID:  vs.TTSVoiceID,
-		TTSLanguage: vs.TTSLanguage,
-		UserEmail:   ac.Email,
-		UserID:      userIDForDial(ac),
+		LeadID:                 lead.ID,
+		LeadName:               lead.FirstName + " " + lead.LastName,
+		LeadPhone:              lead.Phone,
+		CampaignID:             body.CampaignID,
+		OrgID:                  ac.OrgID,
+		Interest:               lead.Interest,
+		TTSProvider:            vs.TTSProvider,
+		TTSVoiceID:             vs.TTSVoiceID,
+		TTSLanguage:            vs.TTSLanguage,
+		MaxCallDurationSeconds: vs.MaxCallDurationSeconds,
+		UserEmail:              ac.Email,
+		UserID:                 userIDForDial(ac),
 	}
 
 	if _, err := s.initiator.Initiate(r.Context(), data); err != nil {
@@ -170,18 +171,19 @@ func (s *Server) campaignDialLead(w http.ResponseWriter, r *http.Request) {
 	vs, _ := s.db.GetCampaignVoiceSettings(campaignID)
 
 	data := dial.CallData{
-		LeadID:          lead.ID,
-		LeadName:        lead.FirstName + " " + lead.LastName,
-		LeadPhone:       lead.Phone,
-		CampaignID:      campaignID,
-		OrgID:           ac.OrgID,
-		Interest:        lead.Interest,
-		TTSProvider:     vs.TTSProvider,
-		TTSVoiceID:      vs.TTSVoiceID,
-		TTSLanguage:     vs.TTSLanguage,
-		UserEmail:       ac.Email,
-		UserID:          userIDForDial(ac),
-		ExotelAccountID: body.ExotelAccountID,
+		LeadID:                 lead.ID,
+		LeadName:               lead.FirstName + " " + lead.LastName,
+		LeadPhone:              lead.Phone,
+		CampaignID:             campaignID,
+		OrgID:                  ac.OrgID,
+		Interest:               lead.Interest,
+		TTSProvider:            vs.TTSProvider,
+		TTSVoiceID:             vs.TTSVoiceID,
+		TTSLanguage:            vs.TTSLanguage,
+		MaxCallDurationSeconds: vs.MaxCallDurationSeconds,
+		UserEmail:              ac.Email,
+		UserID:                 userIDForDial(ac),
+		ExotelAccountID:        body.ExotelAccountID,
 	}
 
 	if _, err := s.initiator.Initiate(r.Context(), data); err != nil {
@@ -280,17 +282,18 @@ func (s *Server) campaignDialAll(w http.ResponseWriter, r *http.Request) {
 	queue := make([]dial.CallData, 0, len(dialable))
 	for _, l := range dialable {
 		queue = append(queue, dial.CallData{
-			LeadID:          l.ID,
-			LeadName:        l.FirstName + " " + l.LastName,
-			LeadPhone:       l.Phone,
-			CampaignID:      campaignID,
-			OrgID:           ac.OrgID,
-			Interest:        l.Interest,
-			TTSProvider:     vs.TTSProvider,
-			TTSVoiceID:      vs.TTSVoiceID,
-			TTSLanguage:     vs.TTSLanguage,
-			UserEmail:       ac.Email,
-			ExotelAccountID: body.ExotelAccountID,
+			LeadID:                 l.ID,
+			LeadName:               l.FirstName + " " + l.LastName,
+			LeadPhone:              l.Phone,
+			CampaignID:             campaignID,
+			OrgID:                  ac.OrgID,
+			Interest:               l.Interest,
+			TTSProvider:            vs.TTSProvider,
+			TTSVoiceID:             vs.TTSVoiceID,
+			TTSLanguage:            vs.TTSLanguage,
+			MaxCallDurationSeconds: vs.MaxCallDurationSeconds,
+			UserEmail:              ac.Email,
+			ExotelAccountID:        body.ExotelAccountID,
 		})
 	}
 
@@ -316,13 +319,13 @@ func (s *Server) campaignDialAll(w http.ResponseWriter, r *http.Request) {
 				s.logger.Warn("campaignDialAll: lead failed",
 					zap.Int64("lead_id", d.LeadID), zap.Error(err))
 				// Initiator already emits `failed` on error — no duplicate.
-				// Hard stop on insufficient credits — every remaining lead
+				// Hard stop on completed minute balance — every remaining lead
 				// would fail the same way, and we'd flood the activity feed
-				// with N copies of the same recharge prompt. Surface it
+				// with N copies of the same prompt. Surface it
 				// once and bail.
 				if errors.Is(err, dial.ErrInsufficientCredits) {
 					s.store.EmitCampaignEvent(ctx, campaignID, "Campaign", "",
-						"failed", "insufficient credits — recharge to continue")
+						"failed", dial.ErrInsufficientCredits.Error())
 					return
 				}
 			}
@@ -394,16 +397,17 @@ func (s *Server) campaignRedialFailed(w http.ResponseWriter, r *http.Request) {
 	queue := make([]dial.CallData, 0, len(leads))
 	for _, lead := range leads {
 		queue = append(queue, dial.CallData{
-			LeadID:      lead.ID,
-			LeadName:    lead.FirstName + " " + lead.LastName,
-			LeadPhone:   lead.Phone,
-			CampaignID:  campaignID,
-			OrgID:       ac.OrgID,
-			Interest:    lead.Interest,
-			TTSProvider: vs.TTSProvider,
-			TTSVoiceID:  vs.TTSVoiceID,
-			TTSLanguage: vs.TTSLanguage,
-			UserEmail:   ac.Email,
+			LeadID:                 lead.ID,
+			LeadName:               lead.FirstName + " " + lead.LastName,
+			LeadPhone:              lead.Phone,
+			CampaignID:             campaignID,
+			OrgID:                  ac.OrgID,
+			Interest:               lead.Interest,
+			TTSProvider:            vs.TTSProvider,
+			TTSVoiceID:             vs.TTSVoiceID,
+			TTSLanguage:            vs.TTSLanguage,
+			MaxCallDurationSeconds: vs.MaxCallDurationSeconds,
+			UserEmail:              ac.Email,
 		})
 	}
 
@@ -430,7 +434,7 @@ func (s *Server) campaignRedialFailed(w http.ResponseWriter, r *http.Request) {
 				// so no duplicate emit needed here.
 				if errors.Is(err, dial.ErrInsufficientCredits) {
 					s.store.EmitCampaignEvent(ctx, campaignID, "Campaign", "",
-						"failed", "insufficient credits — recharge to continue")
+						"failed", dial.ErrInsufficientCredits.Error())
 					return
 				}
 			}

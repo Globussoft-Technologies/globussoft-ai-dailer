@@ -93,6 +93,21 @@ export default function CampaignModals({
     URL.revokeObjectURL(url);
   };
 
+  const createProviderAccountOptions = (orgExotelAccounts || [])
+    .filter(a => (a.direction || 'outbound') !== 'inbound');
+  const providerAccountLabel = (provider) => {
+    switch ((provider || 'exotel').toLowerCase()) {
+      case 'tata':
+      case 'smartflo':
+      case 'tata_tele':
+        return 'Tata Tele';
+      case 'twilio':
+        return 'Twilio';
+      default:
+        return 'Exotel';
+    }
+  };
+
   return (
     <>
       {/* Create Campaign Modal */}
@@ -229,7 +244,7 @@ export default function CampaignModals({
                     {!hideAiFeatures && <option value="whatsapp">💬 WhatsApp (AI Chat)</option>}
                   </select>
                 </div>
-                {(createForm.channel !== 'whatsapp') && orgExotelAccounts && orgExotelAccounts.some(a => a.app_type === 'voicebot' && (a.direction || 'outbound') !== 'inbound') && (
+                {(createForm.channel !== 'whatsapp') && createProviderAccountOptions.length > 0 && (
                   <div style={{marginBottom: '1.5rem'}}>
                     <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>
                       Provider Account <span style={{color: '#64748b', fontSize: '0.75rem'}}>(optional — select saved browser calling credentials)</span>
@@ -238,9 +253,9 @@ export default function CampaignModals({
                       onChange={e => setCreateForm({...createForm, exotel_account_id: e.target.value ? parseInt(e.target.value) : ''})}
                       style={{width: '100%'}}>
                       <option value="">-- Use default / set later --</option>
-                      {orgExotelAccounts.filter(a => a.app_type === 'voicebot' && (a.direction || 'outbound') !== 'inbound').map(a => (
+                      {createProviderAccountOptions.map(a => (
                         <option key={a.id} value={a.id}>
-                          {a.name || a.account_sid} · {a.caller_id || 'no caller ID'}
+                          [{providerAccountLabel(a.provider)}] {a.name || a.account_sid} · {a.caller_id || 'no caller ID'}
                         </option>
                       ))}
                     </select>
@@ -464,18 +479,59 @@ export default function CampaignModals({
                   }}>
                   Choose CSV
                 </button>
-                <span style={{
-                  color: csvFile ? '#334155' : '#94a3b8',
-                  background: csvFile ? 'rgba(99,102,241,0.08)' : 'transparent',
-                  border: csvFile ? '1px solid rgba(99,102,241,0.18)' : '1px solid transparent',
-                  borderRadius: '8px',
-                  padding: csvFile ? '7px 10px' : 0,
-                  fontSize: '0.85rem',
-                  fontWeight: csvFile ? 700 : 500,
-                  wordBreak: 'break-all',
-                }}>
-                  {csvFile ? csvFile.name : 'No file selected'}
-                </span>
+                {csvFile ? (
+                  <span style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    color: '#334155',
+                    background: 'rgba(99,102,241,0.08)',
+                    border: '1px solid rgba(99,102,241,0.18)',
+                    borderRadius: '8px',
+                    padding: '7px 8px 7px 10px',
+                    fontSize: '0.85rem',
+                    fontWeight: 700,
+                    maxWidth: '100%',
+                  }}>
+                    <span style={{wordBreak: 'break-all'}}>{csvFile.name}</span>
+                    <button
+                      type="button"
+                      aria-label="Clear selected CSV"
+                      title="Clear selected CSV"
+                      onClick={() => {
+                        setCsvFile(null);
+                        if (setCsvImportResult) setCsvImportResult(null);
+                        if (csvInputRef.current) csvInputRef.current.value = '';
+                      }}
+                      style={{
+                        width: 18,
+                        height: 18,
+                        flex: '0 0 18px',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        background: '#ffffff',
+                        border: '1px solid rgba(99,102,241,0.18)',
+                        borderRadius: '50%',
+                        color: '#334155',
+                        cursor: 'pointer',
+                        fontSize: '0.9rem',
+                        lineHeight: 1,
+                        padding: 0,
+                      }}>
+                      &times;
+                    </button>
+                  </span>
+                ) : (
+                  <span style={{
+                    color: '#94a3b8',
+                    border: '1px solid transparent',
+                    fontSize: '0.85rem',
+                    fontWeight: 500,
+                  }}>
+                    No file selected
+                  </span>
+                )}
               </div>
             </div>
             <div style={{display: 'flex', gap: '10px', justifyContent: 'flex-end'}}>

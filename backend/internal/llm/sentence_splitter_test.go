@@ -66,3 +66,17 @@ func TestSplitBuffer_WhitespaceTrimmedFromSentences(t *testing.T) {
 	sentences, _ := SplitBuffer("  Hello.  World?  ")
 	assert.Equal(t, []string{"Hello.", "World?"}, sentences)
 }
+
+func TestParseChunk_StripsBracketedMeta(t *testing.T) {
+	text, hangup := parseChunk(`[The user says "Hello", which is unclear.] Hello, this is Aditya from Panora Exports.`)
+
+	assert.False(t, hangup)
+	assert.Equal(t, "Hello, this is Aditya from Panora Exports.", text)
+}
+
+func TestParseChunk_KeepsHangupSignal(t *testing.T) {
+	text, hangup := parseChunk(`Thank you. [HANGUP]`)
+
+	assert.True(t, hangup)
+	assert.Equal(t, "Thank you.", text)
+}

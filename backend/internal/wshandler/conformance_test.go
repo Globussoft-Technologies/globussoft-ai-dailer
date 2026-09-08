@@ -169,20 +169,20 @@ func TestBinaryFrameAccepted(t *testing.T) {
 func TestMaxTokens(t *testing.T) {
 	sess := &CallSession{Language: "hi"}
 
-	// Short transcript (2 words → 60) clamped to non-English minimum 250
-	assert.Equal(t, int32(250), sess.MaxTokens("test transcript"), "short non-English transcript should be 250")
+	// Short transcript is clamped to the non-English minimum.
+	assert.Equal(t, int32(320), sess.MaxTokens("test transcript"), "short non-English transcript should be 320")
 
-	// Medium transcript (10 words → 300)
-	assert.Equal(t, int32(300), sess.MaxTokens("one two three four five six seven eight nine ten"))
+	// Medium transcript is still clamped to the minimum.
+	assert.Equal(t, int32(320), sess.MaxTokens("one two three four five six seven eight nine ten"))
 
-	// Long transcript (>20 words → >600) clamped to non-English maximum 900
+	// Long transcript scales up without allowing long monologues.
 	longText := "one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty twentyone"
-	assert.Equal(t, int32(630), sess.MaxTokens(longText), "long non-English transcript should be 630")
+	assert.Equal(t, int32(504), sess.MaxTokens(longText), "long non-English transcript should be 504")
 
-	// English should keep the lower multiplier and cap.
+	// English keeps a lower cap than Indian languages for faster outbound turns.
 	sess.Language = "en"
-	assert.Equal(t, int32(150), sess.MaxTokens("test transcript"), "short English transcript should be 150")
-	assert.Equal(t, int32(400), sess.MaxTokens(longText), "long English transcript should be 400")
+	assert.Equal(t, int32(250), sess.MaxTokens("test transcript"), "short English transcript should be 250")
+	assert.Equal(t, int32(420), sess.MaxTokens(longText), "long English transcript should be 420")
 }
 
 // TestGreetingSentOnce verifies TrySetGreeting is idempotent (atomic CAS).
@@ -199,6 +199,89 @@ func TestHangupFlag(t *testing.T) {
 	assert.False(t, sess.HangupRequested())
 	sess.RequestHangup()
 	assert.True(t, sess.HangupRequested())
+}
+
+func TestMaxDurationCloseCannotBeCancelledByBargeIn(t *testing.T) {
+	sess := NewCallSession("test_stream", nil, zap.NewNop())
+	sess.SetBargeInPending(true)
+	sess.SetBargeIn(true)
+	sess.RequestMaxDurationClose()
+
+	assert.True(t, sess.ConfirmBargeIn())
+	assert.True(t, sess.HangupRequested())
+	assert.True(t, sess.IsMaxDurationClosing())
+	assert.False(t, sess.IsBargeInActive())
+}
+
+func TestFinalCloseCannotBeCancelledByBargeIn(t *testing.T) {
+	sess := NewCallSession("test_stream", nil, zap.NewNop())
+	sess.SetBargeInPending(true)
+	sess.SetBargeIn(true)
+	sess.RequestFinalClose()
+
+	assert.False(t, sess.ConfirmBargeIn())
+	assert.True(t, sess.HangupRequested())
+	assert.True(t, sess.IsFinalClosing())
+	assert.False(t, sess.IsBargeInActive())
+	assert.False(t, sess.IsBargeInPending())
+	assert.False(t, sess.TryBargeIn("unit-test"))
+}
+
+func TestTentativeBargeInDoesNotCancelTTSUntilConfirmed(t *testing.T) {
+	sess := NewCallSession("test_stream", nil, zap.NewNop())
+	cancelled := false
+	sess.SetCancelTTS(func() { cancelled = true })
+
+	assert.True(t, sess.TentativeTriggerBargeIn())
+	assert.True(t, sess.IsBargeInPending())
+	assert.False(t, sess.IsBargeInActive())
+	assert.False(t, cancelled)
+
+	assert.True(t, sess.ConfirmBargeIn())
+	assert.True(t, sess.IsBargeInActive())
+	assert.True(t, cancelled)
+}
+
+func TestMaxDurationWaitsForOneCustomerReply(t *testing.T) {
+	sess := NewCallSession("test_stream", nil, zap.NewNop())
+
+	sess.RequestMaxDurationWaitReply()
+
+	assert.True(t, sess.IsMaxDurationSoftClosing())
+	assert.True(t, sess.ConsumeMaxDurationWaitReply())
+	assert.False(t, sess.ConsumeMaxDurationWaitReply())
+}
+
+func TestMaxDurationClosingLineAdaptsToFinalReply(t *testing.T) {
+	provide := maxDurationClosingLineForReply("en", "It's been 100 employees, can you provide?")
+	assert.Contains(t, provide, "Yes, we can help with that.")
+	assert.NotContains(t, provide, "?")
+
+	question := maxDurationClosingLineForReply("en", "Okay tell me what varies for corporate and other sections?")
+	assert.Contains(t, question, "employee count")
+	assert.Contains(t, question, "access points")
+	assert.NotContains(t, question, "?")
+
+	answer := maxDurationClosingLineForReply("en", "Education")
+	assert.Contains(t, answer, "Got it, thank you for sharing.")
+	assert.NotContains(t, answer, "?")
+}
+
+func TestFillerSoundsDoNotCountAsSpeech(t *testing.T) {
+	for _, text := range []string{
+		"hmm", "mm-hmm", "Mm-hmm.", "mhm", "uhh", "ఉమ్.", ".", "...", "?",
+	} {
+		assert.True(t, isFillerSound(text), text)
+		assert.True(t, isKnownFiller(text), text)
+	}
+	assert.False(t, isFillerSound("hello"))
+	assert.False(t, isFillerSound("హలో."))
+	assert.False(t, isFillerSound("okay"))
+	assert.False(t, isFillerSound("haan"))
+	assert.False(t, isFillerSound("no"))
+	assert.False(t, isFillerSound("ok"))
+	assert.False(t, isFillerSound("okay tell me more"))
+	assert.False(t, isFillerSound("hello, who is speaking"))
 }
 
 // TestMsSinceTTSEnd_BeforeFirstMark returns 9999 (no TTS yet).

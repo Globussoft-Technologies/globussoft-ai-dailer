@@ -80,7 +80,7 @@ export default function UserManagementPage({ apiFetch, API_URL, currentUser }) {
     setup_calling: false,
     provider_account: {
       provider: 'exotel', name: '', api_key: '', api_token: '', api_secret: '',
-      account_sid: '', caller_id: '', app_id: '', app_type: 'exoml', region: '', subdomain: '',
+      account_sid: '', caller_id: '', app_id: '', app_type: 'exoml', direction: 'outbound', region: '', subdomain: '',
     },
   });
 
@@ -106,7 +106,7 @@ export default function UserManagementPage({ apiFetch, API_URL, currentUser }) {
       setup_calling: false,
       provider_account: {
         provider: 'exotel', name: '', api_key: '', api_token: '', api_secret: '',
-        account_sid: '', caller_id: '', app_id: '', app_type: 'exoml', region: '', subdomain: '',
+        account_sid: '', caller_id: '', app_id: '', app_type: 'exoml', direction: 'outbound', region: '', subdomain: '',
       },
     });
   };
@@ -369,16 +369,21 @@ export default function UserManagementPage({ apiFetch, API_URL, currentUser }) {
                   <Field label="Account Name" value={form.provider_account?.name || ''} onChange={v => setForm({ ...form, provider_account: { ...form.provider_account, name: v } })} required />
                   <Select label="Provider" value={form.provider_account?.provider || 'exotel'} onChange={v => setForm({ ...form, provider_account: { ...form.provider_account, provider: v } })} options={[
                     { value: 'exotel', label: 'Exotel' },
+                    { value: 'tata', label: 'Tata Tele' },
                     { value: 'twilio', label: 'Twilio' },
                   ]} />
-                  <Field label="API Key / Auth Token" value={form.provider_account?.api_key || ''} onChange={v => setForm({ ...form, provider_account: { ...form.provider_account, api_key: v } })} required />
-                  <Field label="API Token / API Key SID" value={form.provider_account?.api_token || ''} onChange={v => setForm({ ...form, provider_account: { ...form.provider_account, api_token: v } })} required />
+                  <Field label={form.provider_account?.provider === 'tata' ? 'API Token' : 'API Key / Auth Token'} value={form.provider_account?.api_key || ''} onChange={v => setForm({ ...form, provider_account: { ...form.provider_account, api_key: v } })} required />
+                  {form.provider_account?.provider !== 'tata' && (
+                    <Field label="API Token / API Key SID" value={form.provider_account?.api_token || ''} onChange={v => setForm({ ...form, provider_account: { ...form.provider_account, api_token: v } })} required />
+                  )}
                   {form.provider_account?.provider === 'twilio' && (
                     <Field label="API Secret" value={form.provider_account?.api_secret || ''} onChange={v => setForm({ ...form, provider_account: { ...form.provider_account, api_secret: v } })} required />
                   )}
-                  <Field label="Account SID" value={form.provider_account?.account_sid || ''} onChange={v => setForm({ ...form, provider_account: { ...form.provider_account, account_sid: v } })} required />
-                  <Field label="Caller ID / From Number" value={form.provider_account?.caller_id || ''} onChange={v => setForm({ ...form, provider_account: { ...form.provider_account, caller_id: v } })} required />
-                  <Field label="App ID / TwiML App SID" value={form.provider_account?.app_id || ''} onChange={v => setForm({ ...form, provider_account: { ...form.provider_account, app_id: v } })} />
+                  {form.provider_account?.provider !== 'tata' && (
+                    <Field label="Account SID" value={form.provider_account?.account_sid || ''} onChange={v => setForm({ ...form, provider_account: { ...form.provider_account, account_sid: v } })} required />
+                  )}
+                  <Field label={form.provider_account?.provider === 'tata' ? 'Caller ID' : 'Caller ID / From Number'} value={form.provider_account?.caller_id || ''} onChange={v => setForm({ ...form, provider_account: { ...form.provider_account, caller_id: v } })} required />
+                  <Field label={form.provider_account?.provider === 'tata' ? 'Agent Number' : 'App ID / TwiML App SID'} value={form.provider_account?.app_id || ''} onChange={v => setForm({ ...form, provider_account: { ...form.provider_account, app_id: v } })} required={form.provider_account?.provider === 'tata'} />
                   {form.provider_account?.provider === 'exotel' && (
                     <Select label="App Type" value={form.provider_account?.app_type || 'exoml'} onChange={v => setForm({ ...form, provider_account: { ...form.provider_account, app_type: v } })} options={[
                       { value: 'exoml', label: 'ExoML (legacy XML)' },

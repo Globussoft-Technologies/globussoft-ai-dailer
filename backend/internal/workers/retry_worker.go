@@ -58,15 +58,16 @@ func (rw *RetryWorker) tick(ctx context.Context) {
 
 		vs, _ := rw.db.GetCampaignVoiceSettings(r.CampaignID)
 		data := dial.CallData{
-			LeadID:      lead.ID,
-			LeadName:    lead.FirstName + " " + lead.LastName,
-			LeadPhone:   lead.Phone,
-			CampaignID:  r.CampaignID,
-			OrgID:       r.OrgID,
-			Interest:    lead.Interest,
-			TTSProvider: vs.TTSProvider,
-			TTSVoiceID:  vs.TTSVoiceID,
-			TTSLanguage: vs.TTSLanguage,
+			LeadID:                 lead.ID,
+			LeadName:               lead.FirstName + " " + lead.LastName,
+			LeadPhone:              lead.Phone,
+			CampaignID:             r.CampaignID,
+			OrgID:                  r.OrgID,
+			Interest:               lead.Interest,
+			TTSProvider:            vs.TTSProvider,
+			TTSVoiceID:             vs.TTSVoiceID,
+			TTSLanguage:            vs.TTSLanguage,
+			MaxCallDurationSeconds: vs.MaxCallDurationSeconds,
 		}
 
 		if _, err := rw.initiator.Initiate(ctx, data); err != nil {

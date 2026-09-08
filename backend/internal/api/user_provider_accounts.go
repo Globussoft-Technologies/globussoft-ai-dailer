@@ -146,7 +146,7 @@ func (s *Server) createUserProviderAccount(w http.ResponseWriter, r *http.Reques
 
 	id, err := s.db.CreateUserExotelAccount(target.ID, target.OrgID, req.Provider,
 		strings.TrimSpace(req.Name), req.APIKey, req.APIToken, req.APISecret,
-		req.AccountSID, req.CallerID, req.AppID, req.AppType, req.Region, req.Subdomain)
+		req.AccountSID, req.CallerID, req.AppID, req.AppType, req.Direction, req.Region, req.Subdomain)
 	if err != nil {
 		s.logger.Sugar().Errorw("createUserProviderAccount", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -187,7 +187,7 @@ func (s *Server) updateUserProviderAccount(w http.ResponseWriter, r *http.Reques
 
 	if err := s.db.UpdateUserExotelAccount(accountID, target.ID, target.OrgID, req.Provider,
 		strings.TrimSpace(req.Name), req.APIKey, req.APIToken, req.APISecret,
-		req.AccountSID, req.CallerID, req.AppID, req.AppType, req.Region, req.Subdomain); err != nil {
+		req.AccountSID, req.CallerID, req.AppID, req.AppType, req.Direction, req.Region, req.Subdomain); err != nil {
 		s.logger.Sugar().Errorw("updateUserProviderAccount", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
@@ -266,7 +266,7 @@ func (s *Server) createMyProviderAccount(w http.ResponseWriter, r *http.Request)
 	}
 	id, err := s.db.CreateUserExotelAccount(ac.UserID, ac.OrgID, req.Provider,
 		strings.TrimSpace(req.Name), req.APIKey, req.APIToken, req.APISecret,
-		req.AccountSID, req.CallerID, req.AppID, req.AppType, req.Region, req.Subdomain)
+		req.AccountSID, req.CallerID, req.AppID, req.AppType, req.Direction, req.Region, req.Subdomain)
 	if err != nil {
 		s.logger.Sugar().Errorw("createMyProviderAccount", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")

@@ -212,6 +212,7 @@ func (s *Service) SaveAndAnalyze(ctx context.Context, req SaveRequest) {
 	review := &db.CallReview{
 		TranscriptID: transcriptID,
 		OrgID:        req.OrgID,
+		LeadID:       req.LeadID,
 		Sentiment:    "neutral",
 	}
 	analyzed := false
@@ -433,7 +434,7 @@ FIELDS:
 - "failure_reason": 1 sentence in English on why the call didn't convert; if it did, write "N/A — appointment booked". For no-reply calls, write e.g. "Customer did not respond after greeting — likely hung up or wrong number"
 - "what_went_well": 1-2 sentences in English on what the agent did right. If nothing meaningful happened (no reply), say "Agent delivered greeting clearly but had no chance to engage the customer"
 - "what_went_wrong": 1-2 sentences on what the agent could improve. For no-reply calls, say "No opportunity to engage — call ended before any customer interaction"
-- "summary": 1-2 sentence summary referencing what specifically happened in THIS transcript
+- "summary": 1-2 sentence summary referencing what specifically happened in THIS transcript. Record only requirements the customer clearly stated in direct response to a question. Ignore background voices, other people near the phone, TV/radio, and one-off remarks unrelated to the conversation — never present them as the customer's interest or requirement
 - "insights": 1 coaching insight in English for next time
 - "prompt_improvement_suggestion": 1 specific, actionable instruction to add to the AI system prompt to improve future calls of this kind
 

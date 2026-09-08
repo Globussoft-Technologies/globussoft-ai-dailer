@@ -1534,6 +1534,24 @@ export default function CampaignDetail({
                 <option key={l.code} value={l.code}>{l.name}</option>
               ))}
             </select>
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: T.muted, fontWeight: 700, whiteSpace: 'nowrap' }}>
+              Max Call Time
+              <input
+                className="form-input"
+                type="number"
+                min="0"
+                max="60"
+                step="1"
+                value={campVoice.max_call_duration_seconds ? Math.round(Number(campVoice.max_call_duration_seconds) / 60) : ''}
+                onChange={e => {
+                  const minutes = Math.max(0, Math.min(60, Number(e.target.value || 0)));
+                  setCampVoice(v => ({ ...v, max_call_duration_seconds: minutes ? minutes * 60 : 0 }));
+                }}
+                placeholder="No limit"
+                style={{ ...inputStyle, height: 32, width: 92 }}
+              />
+              min
+            </label>
             {canSaveVoiceSettings && <button style={{
                 background: campVoiceSaveStatus === 'saved' ? T.green
                   : campVoiceSaveStatus === 'error' ? T.red
@@ -1563,7 +1581,8 @@ export default function CampaignDetail({
                   const langLabel = INDIAN_LANGUAGES
                     .find(l => l.code === campVoice.tts_language)?.name
                     || campVoice.tts_language;
-                  return `Current: ${providerLabel} - ${voiceLabel}` + (langLabel ? ` (${langLabel})` : '');
+                  const maxMinutes = Number(campVoice.max_call_duration_seconds || 0) / 60;
+                  return `Current: ${providerLabel} - ${voiceLabel}` + (langLabel ? ` (${langLabel})` : '') + (maxMinutes > 0 ? ` · Max call time ${Math.round(maxMinutes)} min` : ' · No max limit');
                 })()
               : 'Using org default'}
           </div>

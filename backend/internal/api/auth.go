@@ -126,6 +126,30 @@ func (s *Server) signup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !s.isSuperAdmin(req.Email) {
+		existingSub, err := s.db.GetAdminSubscriptionByEmail(req.Email)
+		if err != nil {
+			s.logger.Sugar().Errorw("signup: GetAdminSubscriptionByEmail", "err", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if existingSub == nil {
+			expiresAt := time.Now().UTC().AddDate(0, 0, trialExpiryDays)
+			if _, err := s.db.CreateAdminSubscription(req.Email, expiresAt, "trial"); err != nil {
+				s.logger.Sugar().Errorw("signup: CreateAdminSubscription", "err", err)
+				writeError(w, http.StatusInternalServerError, "internal error")
+				return
+			}
+		}
+		if orgID > 0 {
+			if _, err := s.db.SetOrgCreditMinutes(orgID, trialMinutes, "signup-trial", fmt.Sprintf("%d free trial minutes", trialMinutes)); err != nil {
+				s.logger.Sugar().Errorw("signup: SetOrgCreditMinutes", "err", err)
+				writeError(w, http.StatusInternalServerError, "internal error")
+				return
+			}
+		}
+	}
+
 	// Block signup for non-super-admins if subscription is missing/expired/inactive.
 	if !s.isSuperAdmin(req.Email) {
 		if subErr, err := s.checkSubscription(req.Email); err != nil {

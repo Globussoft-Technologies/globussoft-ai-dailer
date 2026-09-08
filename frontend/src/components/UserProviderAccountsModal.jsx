@@ -48,7 +48,7 @@ const tdStyle = {
 
 const initialForm = {
   provider: 'exotel', name: '', api_key: '', api_token: '', api_secret: '',
-  account_sid: '', caller_id: '', app_id: '', app_type: 'exoml', region: '', subdomain: '',
+  account_sid: '', caller_id: '', app_id: '', app_type: 'exoml', direction: 'outbound', region: '', subdomain: '',
 };
 
 export default function UserProviderAccountsModal({ user, apiFetch, API_URL, onClose }) {
@@ -86,6 +86,7 @@ export default function UserProviderAccountsModal({ user, apiFetch, API_URL, onC
       api_token: a.api_token || '', api_secret: a.api_secret || '',
       account_sid: a.account_sid || '', caller_id: a.caller_id || '',
       app_id: a.app_id || '', app_type: a.app_type || 'exoml',
+      direction: a.direction || 'outbound',
       region: a.region || '', subdomain: a.subdomain || '',
     });
     setEditing(a);
@@ -152,7 +153,7 @@ export default function UserProviderAccountsModal({ user, apiFetch, API_URL, onC
           <button style={btnSecondary} onClick={onClose}>Close</button>
         </div>
         <p style={{ margin: '0 0 16px', fontSize: 12, color: T.muted }}>
-          Personal Exotel/Twilio accounts owned by this user. When present, their outbound calls use these credentials instead of the org/campaign default.
+          Personal Exotel/Tata/Twilio accounts owned by this user. When present, their outbound calls use these credentials instead of the org/campaign default.
         </p>
 
         {!showForm && (
@@ -165,16 +166,21 @@ export default function UserProviderAccountsModal({ user, apiFetch, API_URL, onC
               <Field label="Name" value={form.name} onChange={v => setForm({ ...form, name: v })} required />
               <Select label="Provider" value={form.provider} onChange={v => setForm({ ...form, provider: v })} options={[
                 { value: 'exotel', label: 'Exotel' },
+                { value: 'tata', label: 'Tata Tele' },
                 { value: 'twilio', label: 'Twilio' },
               ]} />
-              <Field label="API Key / Auth Token" value={form.api_key} onChange={v => setForm({ ...form, api_key: v })} required />
-              <Field label="API Token / API Key SID" value={form.api_token} onChange={v => setForm({ ...form, api_token: v })} required />
+              <Field label={form.provider === 'tata' ? 'API Token' : 'API Key / Auth Token'} value={form.api_key} onChange={v => setForm({ ...form, api_key: v })} required />
+              {form.provider !== 'tata' && (
+                <Field label="API Token / API Key SID" value={form.api_token} onChange={v => setForm({ ...form, api_token: v })} required />
+              )}
               {form.provider === 'twilio' && (
                 <Field label="API Secret" value={form.api_secret} onChange={v => setForm({ ...form, api_secret: v })} required />
               )}
-              <Field label="Account SID" value={form.account_sid} onChange={v => setForm({ ...form, account_sid: v })} required />
-              <Field label="Caller ID / From Number" value={form.caller_id} onChange={v => setForm({ ...form, caller_id: v })} required />
-              <Field label="App ID / TwiML App SID" value={form.app_id} onChange={v => setForm({ ...form, app_id: v })} />
+              {form.provider !== 'tata' && (
+                <Field label="Account SID" value={form.account_sid} onChange={v => setForm({ ...form, account_sid: v })} required />
+              )}
+              <Field label={form.provider === 'tata' ? 'Caller ID' : 'Caller ID / From Number'} value={form.caller_id} onChange={v => setForm({ ...form, caller_id: v })} required />
+              <Field label={form.provider === 'tata' ? 'Agent Number' : 'App ID / TwiML App SID'} value={form.app_id} onChange={v => setForm({ ...form, app_id: v })} required={form.provider === 'tata'} />
               {form.provider === 'exotel' && (
                 <Select label="App Type" value={form.app_type} onChange={v => setForm({ ...form, app_type: v })} options={[
                   { value: 'exoml', label: 'ExoML (legacy XML)' },

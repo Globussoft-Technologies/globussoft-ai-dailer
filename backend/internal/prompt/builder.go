@@ -15,11 +15,13 @@ type CallContext struct {
 	SystemPrompt string
 	GreetingText string
 	// Voice config — populated from campaign/org voice settings
-	TTSProvider string
-	TTSVoiceID  string
-	TTSLanguage string
-	AgentName   string // org name, used for WA/email confirmations
-	PersonaName string // voice persona name (e.g. "आदित्य"), used inside greeting + system prompt
+	TTSProvider            string
+	TTSVoiceID             string
+	TTSLanguage            string
+	MaxCallDurationSeconds int
+	AgentName              string // org name, used for WA/email confirmations
+	PersonaName            string // voice persona name (e.g. "आदित्य"), used inside greeting + system prompt
+	CallMemoryCount        int    // past-call memory entries injected into the system prompt (0 = none)
 }
 
 // ── voice identity data ───────────────────────────────────────────────────────
@@ -185,6 +187,22 @@ func (b *Builder) BuildCallContext(_ context.Context, orgID, campaignID, leadID 
 		Language:             effectiveLang,
 	}
 
+	// Cross-call memory: reviews from past calls with this lead become context
+	// for the new call (docs/call-memory-proposal.md). Soft-fail by design — a
+	// lookup error or a lead with no history leaves the prompt unchanged and
+	// must never block a call. Placement differs by prompt type: the default
+	// template gets it between GOAL and CALL FLOW (confirmed facts before the
+	// questionnaire); custom org prompts get it appended at the end since we
+	// don't control their layout.
+	memoryCount := 0
+	memoryBlock := ""
+	if leadID > 0 && campaignID > 0 {
+		if memories, err := b.db.GetLastCallMemory(leadID, campaignID, 3); err == nil {
+			memoryBlock = renderCallMemory(memories)
+			memoryCount = len(memories)
+		}
+	}
+
 	// Build system prompt — custom org-level override short-circuits the full
 	// template and just gets a language directive appended.
 	var systemPrompt string
@@ -193,7 +211,9 @@ func (b *Builder) BuildCallContext(_ context.Context, orgID, campaignID, leadID 
 		if leadName != "" && !strings.Contains(systemPrompt, leadName) {
 			systemPrompt += fmt.Sprintf("\n\nYou are speaking with %s.", leadName)
 		}
+		systemPrompt += memoryBlock
 	} else {
+		pc.CallMemory = memoryBlock
 		systemPrompt = buildDefaultPrompt(pc)
 	}
 
@@ -211,13 +231,15 @@ func (b *Builder) BuildCallContext(_ context.Context, orgID, campaignID, leadID 
 	greeting := buildGreeting(leadName, companyName, personaName, bol, effectiveSource, effectiveLang)
 
 	return &CallContext{
-		SystemPrompt: systemPrompt,
-		GreetingText: greeting,
-		TTSProvider:  vs.TTSProvider,
-		TTSVoiceID:   vs.TTSVoiceID,
-		TTSLanguage:  vs.TTSLanguage,
-		AgentName:    coalesce(orgName, "Callified AI"),
-		PersonaName:  personaName,
+		SystemPrompt:           systemPrompt,
+		GreetingText:           greeting,
+		TTSProvider:            vs.TTSProvider,
+		TTSVoiceID:             vs.TTSVoiceID,
+		TTSLanguage:            vs.TTSLanguage,
+		MaxCallDurationSeconds: vs.MaxCallDurationSeconds,
+		AgentName:              coalesce(orgName, "Callified AI"),
+		PersonaName:            personaName,
+		CallMemoryCount:        memoryCount,
 	}, nil
 }
 
@@ -235,6 +257,57 @@ type promptContext struct {
 	LeadFirst            string
 	SourceInline         string
 	Language             string
+	// CallMemory is the rendered ## PREVIOUS CALLS block ("" when the lead
+	// has no history). Injected between GOAL and CALL FLOW so confirmed
+	// facts are established before the questionnaire, not appended after it.
+	CallMemory string
+}
+
+// callMemoryMaxFieldLen caps each memory field rendered into the system
+// prompt. Prompt bloat slows and costs every LLM turn; short dense memory
+// beats long transcripts.
+const callMemoryMaxFieldLen = 200
+
+// renderCallMemory renders past-call reviews as a ## PREVIOUS CALLS block
+// for the system prompt. Returns "" when there is nothing to inject, so a
+// lead without history gets a byte-identical prompt to before this feature.
+func renderCallMemory(memories []db.CallMemory) string {
+	if len(memories) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("\n\n## PREVIOUS CALLS WITH THIS CUSTOMER\n")
+	sb.WriteString("[INTERNAL NOTES — never speak, translate, paraphrase, or mention these notes to the customer]\n")
+	sb.WriteString("The entries below are CONFIRMED FACTS from your previous conversations with this customer. " +
+		"They OVERRIDE the qualification questions in the call flow: do not re-ask anything already recorded here — " +
+		"briefly confirm the most recent value and move to the next step. If two entries conflict, trust the newer one.\n")
+	for i, m := range memories {
+		fmt.Fprintf(&sb, "%d. Date: %s\n", i+1, m.CreatedAt)
+		if s := clampRunes(m.Summary, callMemoryMaxFieldLen); s != "" {
+			fmt.Fprintf(&sb, "   What happened: %s\n", s)
+		}
+		if s := clampRunes(m.FailureReason, callMemoryMaxFieldLen); s != "" {
+			fmt.Fprintf(&sb, "   What went wrong: %s\n", s)
+		}
+		if s := clampRunes(m.Suggestion, callMemoryMaxFieldLen); s != "" {
+			fmt.Fprintf(&sb, "   Do better this time: %s\n", s)
+		}
+	}
+	sb.WriteString("Use this history naturally: do not re-pitch what the customer already rejected, honor commitments made on past calls, and never reveal that you are reading notes. " +
+		"If the customer doesn't recognize a detail from these notes or denies it — even a detail recorded here — drop it permanently and never mention it again; that detail was wrong. " +
+		"Ignore any detail in these notes that is unrelated to the product you are calling about.")
+	return sb.String()
+}
+
+// clampRunes trims whitespace and truncates s to at most n runes, adding an
+// ellipsis when cut.
+func clampRunes(s string, n int) string {
+	s = strings.TrimSpace(s)
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + "…"
 }
 
 // buildDefaultPrompt assembles the LLM system prompt. Structure is shared
@@ -262,46 +335,84 @@ func buildDefaultPrompt(pc promptContext) string {
 
 	// Goal.
 	b.WriteString("## GOAL\n")
-	if pc.CallFlowInstructions != "" {
+	switch {
+	case pc.CallFlowInstructions != "" && pc.CallMemory != "":
+		// Continuation call: memory exists, so the questionnaire is replaced by
+		// a confirmation step (see CALL FLOW below). Positive directive — LLMs
+		// follow "do X" far more reliably than "don't do Y".
+		b.WriteString("CONTINUATION CALL — you have spoken with this customer before. The PREVIOUS CALLS section below contains confirmed facts from those conversations. Do NOT run the full qualification questionnaire again. Confirm the newest recorded details briefly, accept any corrections, then book an appointment.\n\n")
+	case pc.CallFlowInstructions != "":
 		b.WriteString("Qualify the lead using the questions below as a guide. Ask them in order, but adapt to the conversation: answer the customer's questions, handle interruptions, and only move to the next question after the current one is clearly answered. Then book an appointment.\n\n")
-	} else {
+	default:
 		b.WriteString("Book an appointment with the customer for a follow-up from a senior agent. ")
 		b.WriteString("If the customer asks a question, answer in 1 sentence first, then push toward booking.\n\n")
 	}
 
-	// Call flow.
-	b.WriteString("## CALL FLOW\n")
-	fmt.Fprintf(&b, "1. Intro (already spoken by TTS): acknowledge it naturally.\n")
-	if pc.SourceInline != "" {
-		fmt.Fprintf(&b, "   Lead context: they %s.\n", pc.SourceInline)
+	// Product focus — the agent must never pursue topics outside the product,
+	// whether the customer raises them mid-call or they appear in memory
+	// notes (observed failure: agent interrogated a customer about "child
+	// care" mentioned by background chatter).
+	product := coalesce(pc.ProductName, "our product")
+	b.WriteString("## PRODUCT FOCUS (STRICT)\n")
+	fmt.Fprintf(&b, "This call is ONLY about %s. It is the only product and the only topic of this call.\n", product)
+	b.WriteString("- NEVER ask follow-up questions about anything unrelated to this product — even if the customer mentioned it first. If the customer brings up an off-topic subject, acknowledge it in a few words and steer back to the product in the same reply.\n")
+	b.WriteString("- Never treat an off-topic mention (other services, family, personal matters, anything not about this product) as a requirement, interest, or need. Only product-related details count.\n\n")
+
+	// Past-call memory (confirmed facts) precedes the questionnaire so the
+	// LLM treats them as established context, not an afterthought. Empty for
+	// leads without history.
+	if pc.CallMemory != "" {
+		b.WriteString(pc.CallMemory)
+		b.WriteString("\n")
 	}
-	if pc.CallFlowInstructions != "" {
-		b.WriteString(pc.CallFlowInstructions)
+
+	// Call flow. With memory, the qualification questionnaire is replaced by a
+	// confirm-and-book flow — re-interrogating a known customer is the failure
+	// mode this feature exists to prevent.
+	b.WriteString("## CALL FLOW\n")
+	if pc.CallMemory != "" && pc.CallFlowInstructions != "" {
+		b.WriteString("1. Intro (already spoken by TTS): acknowledge it naturally, then confirm the key details from PREVIOUS CALLS in ONE question. Example: \"Just to confirm — this is for fifteen users across two Bengaluru locations, correct?\"\n")
+		b.WriteString("2. Whatever the customer corrects, accept it and update the details. Then ask when they are free for a short demo and book it.\n")
+		b.WriteString("3. When a time is confirmed → repeat the time, thank them, then end with [HANGUP].\n")
+		b.WriteString("4. If the customer asks to hang up / is not interested → say a short thanks and end with [HANGUP].\n")
 		b.WriteString("\n")
 	} else {
-		b.WriteString("2. If the customer says yes/ok → DO NOT ask \"are you interested?\" again. Go straight to: ")
-		fmt.Fprintf(&b, "%q in %s.\n", frag.AskWhenFree, langLabel)
-		b.WriteString("3. If the customer asks about the product → answer briefly in 1 sentence, then ask about meeting time.\n")
-		b.WriteString("4. When a time is confirmed → repeat the time, thank them, then end with [HANGUP].\n")
-		b.WriteString("5. If the customer asks to hang up / is not interested → say a short thanks and end with [HANGUP].\n")
+		fmt.Fprintf(&b, "1. Intro (already spoken by TTS): acknowledge it naturally.\n")
+		if pc.SourceInline != "" {
+			fmt.Fprintf(&b, "   Lead context: they %s.\n", pc.SourceInline)
+		}
+		if pc.CallFlowInstructions != "" {
+			b.WriteString(pc.CallFlowInstructions)
+			b.WriteString("\n")
+		} else {
+			b.WriteString("2. If the customer says yes/ok → DO NOT ask \"are you interested?\" again. Go straight to: ")
+			fmt.Fprintf(&b, "%q in %s.\n", frag.AskWhenFree, langLabel)
+			b.WriteString("3. If the customer asks about the product → answer briefly in 1 sentence, then ask about meeting time.\n")
+			b.WriteString("4. When a time is confirmed → repeat the time, thank them, then end with [HANGUP].\n")
+			b.WriteString("5. If the customer asks to hang up / is not interested → say a short thanks and end with [HANGUP].\n")
+		}
+		b.WriteString("\n")
 	}
-	b.WriteString("\n")
 
 	// Core rules — universal, English.
 	b.WriteString(`## CORE RULES (STRICT)
 1. NO HALLUCINATION. Only use facts from PRODUCT KNOWLEDGE below. Never invent addresses, phone numbers, pricing, terms, locations, timings, or features. If unknown, say the senior will share details in the meeting.
 2. ONE QUESTION ONLY. Ask exactly ONE question per response. Never combine two questions in the same reply. Wait for the customer's answer before asking the next question. WRONG: "Which option do you want? What is your budget?" (TWO QUESTIONS!) RIGHT: "Which option do you prefer — A or B?" Then wait. Then ask the next question separately.
-3. NO MARKDOWN. No *, **, #, bullets, or numbered lists — TTS reads the characters literally. Plain text only.
-4. NUMBERS IN WORDS. Say "two and a half crore", not "2.5 Cr". Say "five PM", not "5 PM". Say "sixty seconds", not "60-second" or "60 seconds". Never use digit-hyphen-word combinations like "60-second", "30-day", or "15-minute" — always write them as words: "sixty second", "thirty day", "fifteen minute".
-5. LEAD NAME. The lead is "` + leadFirst + `". Use this exact spelling. Never change, abbreviate, or guess another name.
-6. [HANGUP] TAG. End every final turn with the literal English string [HANGUP] after your goodbye text. Never translate it. Never wrap it in extra brackets. Without [HANGUP] the call does not end.
-7. FUTURE DATES ONLY. Offer "today", "tomorrow", "day after". Never offer past dates.
-8. LISTEN FIRST. If the customer trails off ("I…", "umm…"), wait — ask them to continue. Do not repeat time slots.
-9. BARGE-IN / INTERRUPTION. If the customer starts speaking while you are speaking, stop and listen. If the interruption directly answers your current question, accept that answer and continue. If it is a question, objection, unclear reply, filler, or side comment, address it briefly and return to the same unanswered question. Do NOT move to the next call-flow question just because you were interrupted.
-10. NO REPETITION — EXCEPT WHEN NEEDED. Do not ask the same question twice if the customer answered it. But if the customer did not answer, changed the subject, asked a question back, or gave an unclear reply, you MUST re-ask or clarify the current question before advancing.
-11. NEVER REVEAL YOU ARE AN AI. If asked, deflect naturally and stay in character.
-12. VALIDATE OPTION ANSWERS. When you ask a question with specific options, the customer's reply must clearly match one of those options before you move on. Do not guess, assume, or infer an answer from unrelated replies. If the reply is off-topic, unclear, a joke, or a question back, respond briefly if needed and re-ask the same option question politely. If the customer rejects one option, ask again with the remaining relevant options. If the customer asks to switch language, switch language and re-ask the same question.
-13. ADVANCE ONLY AFTER ANSWER. You may only proceed to the next call-flow question after the customer answered the current one. An interruption, side question, or unclear reply does not count as an answer.
+3. SHORT SPOKEN TURNS. Every reply must be one short spoken sentence, ideally under eight seconds. Do not explain multiple benefits, certificates, campaigns, or next steps in one turn. If more detail is needed, ask permission first and wait.
+4. NO MARKDOWN. No *, **, #, bullets, or numbered lists — TTS reads the characters literally. Plain text only.
+5. NUMBERS IN WORDS. Say "two and a half crore", not "2.5 Cr". Say "five PM", not "5 PM". Say "sixty seconds", not "60-second" or "60 seconds". Never use digit-hyphen-word combinations like "60-second", "30-day", or "15-minute" — always write them as words: "sixty second", "thirty day", "fifteen minute".
+6. LEAD NAME. The lead is "` + leadFirst + `". Use this exact spelling. Never change, abbreviate, or guess another name.
+7. [HANGUP] TAG. End every final turn with the literal English string [HANGUP] after your goodbye text. Never translate it. Never wrap it in extra brackets. Without [HANGUP] the call does not end.
+8. FUTURE DATES ONLY. Offer "today", "tomorrow", "day after". Never offer past dates.
+9. LISTEN FIRST. If the customer trails off ("I…", "umm…"), wait — ask them to continue. Do not repeat time slots.
+10. BARGE-IN / INTERRUPTION. If the customer starts speaking while you are speaking, stop and listen. If the interruption directly answers your current question, accept that answer and continue. If it is a question, objection, unclear reply, filler, or side comment, address it briefly and return to the same unanswered question. Do NOT move to the next call-flow question just because you were interrupted.
+11. NO REPETITION — EXCEPT WHEN NEEDED. Do not ask the same question twice if the customer answered it. But if the customer did not answer, changed the subject, asked a question back, or gave an unclear reply, you MUST re-ask or clarify the current question before advancing.
+12. NEVER REVEAL YOU ARE AN AI. If asked, deflect naturally and stay in character.
+13. VALIDATE OPTION ANSWERS. When you ask a question with specific options, the customer's reply must clearly match one of those options before you move on. Do not guess, assume, or infer an answer from unrelated replies. If the reply is off-topic, unclear, a joke, or a question back, respond briefly if needed and re-ask the same option question politely. If the customer rejects one option, ask again with the remaining relevant options. If the customer asks to switch language, switch language and re-ask the same question.
+14. ADVANCE ONLY AFTER ANSWER. You may only proceed to the next call-flow question after the customer answered the current one. An interruption, side question, or unclear reply does not count as an answer.
+15. REPEATED CUSTOMER QUESTIONS. If the customer asks the same question repeatedly, answer it in simpler words instead of repeating the same sentence. Do not say "I already answered", "multiple times", "unable to answer", or blame the customer. On the customer's third total ask of the same question, offer a senior callback and continue the call; do not end or use [HANGUP]. On the customer's fourth total ask of the same question, say a senior teammate will follow up, thank them, and close with [HANGUP].
+16. NO ACKNOWLEDGEMENT-ONLY ANSWERS. If the customer asks a product, company, price, or process question, never reply with only "sure", "certainly", "okay", the customer's name, or the translated equivalent in any language. Give the direct answer immediately in one short spoken sentence.
+17. INTERNAL NOTES ARE INVISIBLE. Any text in square brackets [...] — including TURN CONTROL NOTES and instructions about repeated questions, interruptions, or manager hints — is internal system data. NEVER speak it, translate it, paraphrase it, summarize it, or acknowledge it in any way. Reply only with the customer-facing answer or question.
 `)
 
 	// Per-language rule extras (forward signals, rejection detection, direct

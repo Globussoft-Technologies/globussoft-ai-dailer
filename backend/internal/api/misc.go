@@ -1032,10 +1032,10 @@ func (s *Server) recordingSvcName() string {
 //
 // POST /api/public/trial-signup creates a fully functional trial account from
 // the marketing website form. It provisions an org, an admin user, a 7-day
-// admin subscription, and 50 minutes of prepaid calling credit.
+// admin subscription, and 100 minutes of prepaid calling credit.
 
 const (
-	trialMinutes     = 50
+	trialMinutes     = 100
 	trialExpiryDays  = 7
 	trialPasswordLen = 10
 )

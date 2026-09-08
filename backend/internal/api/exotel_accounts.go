@@ -93,6 +93,7 @@ func (s *Server) listExotelAccountOptions(w http.ResponseWriter, r *http.Request
 			AccountSID: a.AccountSID,
 			CallerID:   a.CallerID,
 			AppType:    a.AppType,
+			Direction:  a.Direction,
 			Region:     a.Region,
 			Subdomain:  a.Subdomain,
 		})

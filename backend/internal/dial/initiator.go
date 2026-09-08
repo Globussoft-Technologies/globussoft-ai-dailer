@@ -18,21 +18,21 @@ import (
 
 // CallData holds the information needed to initiate one outbound call.
 type CallData struct {
-	LeadID      int64
-	LeadName    string
-	LeadPhone   string
-	CampaignID  int64
-	OrgID       int64
-	Interest    string
-	Language    string
-	TTSProvider string
-	TTSVoiceID  string
-	TTSLanguage string
+	LeadID                 int64
+	LeadName               string
+	LeadPhone              string
+	CampaignID             int64
+	OrgID                  int64
+	Interest               string
+	Language               string
+	TTSProvider            string
+	TTSVoiceID             string
+	TTSLanguage            string
+	MaxCallDurationSeconds int
 	// IsBridge=true routes the call to browser-to-phone mode: the Exotel stream is
 	// relayed to the agent's browser WebSocket instead of the AI pipeline.
 	IsBridge bool
-	// UserEmail identifies the agent who clicked the call button. Used to honour
-	// per-user feature flags such as hide_ai_features → unlimited manual calls.
+	// UserEmail identifies the agent who clicked the call button.
 	UserEmail string
 	// UserID is the authenticated dashboard user placing the call. When non-zero
 	// and the user owns a personal provider account, the initiator prefers that
@@ -79,9 +79,9 @@ var ErrCallHours = fmt.Errorf("outside TRAI calling hours (9 AM – 9 PM)")
 
 // ErrInsufficientCredits is returned when the org's prepaid balance is zero
 // or negative. Surfaced to the API handler so it can return HTTP 402 with a
-// "recharge to continue" message instead of letting Exotel be charged for a
+// minute-balance message instead of letting Exotel be charged for a
 // dial we can't bill the customer for.
-var ErrInsufficientCredits = fmt.Errorf("insufficient credits — please recharge to continue making calls")
+var ErrInsufficientCredits = fmt.Errorf("Credits exhausted")
 
 // Initiate performs the full dial sequence for one lead.
 // Returns the carrier-issued call SID plus nil on successful dial initiation
@@ -116,70 +116,35 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 	// OrgID==0 happens in a few legacy/test code paths; let those through
 	// so we don't break dev environments with no billing setup.
 	//
-	// Bypass: manual-plan orgs and AI-hidden users placing a manual browser
-	// call (IsBridge) get unlimited calls — credits are neither checked nor
-	// deducted for those calls. The plan is stored against an Admin email, so
-	// the org-level check is what lets executives in that org dial too.
-	skipCredits := false
+	// Every real dial path uses the same minute balance gate, so calls stop
+	// once available minutes are exhausted.
 	if data.OrgID > 0 {
-		manualPlan := false
-		adminSubStatus, adminSubErr := i.db.ValidateOrgAdminSubscription(data.OrgID)
-		if adminSubErr != nil {
-			i.log.Warn("dial: ValidateOrgAdminSubscription failed", zap.Error(adminSubErr))
-		} else if adminSubStatus != nil && adminSubStatus.Active && strings.EqualFold(adminSubStatus.Plan, "manual") {
-			manualPlan = true
-		}
-
-		if data.IsBridge && ((data.UserEmail != "" && i.db.ShouldHideAiFeatures(data.UserEmail)) || manualPlan) {
-			skipCredits = true
-			i.log.Info("dial: unlimited manual call – skipping credit gate",
-				zap.String("email", data.UserEmail),
-				zap.Int64("org_id", data.OrgID),
-				zap.Int64("lead_id", data.LeadID))
-		} else {
-			oc, ocErr := i.db.GetOrgCredit(data.OrgID)
-			if ocErr != nil {
-				i.log.Warn("dial: GetOrgCredit failed; allowing call", zap.Error(ocErr))
-			} else if oc != nil && oc.BalancePaise <= 0 {
-				// Three passes before blocking:
-				// 1. Active subscription → always allow.
-				// 2. No deduction history → org is new / never topped up; allow so
-				//    fresh orgs and test environments aren't dead-on-arrival.
-				// 3. Has prior deductions and balance=0 → genuinely exhausted.
-				sub, _ := i.db.GetSubscriptionByOrg(data.OrgID)
-				if sub != nil || (adminSubStatus != nil && adminSubStatus.Active) {
-					i.log.Info("dial: zero balance but active subscription – allowing call",
-						zap.Int64("org_id", data.OrgID))
-				} else {
-					hasHistory, _ := i.db.HasCallDeductions(data.OrgID)
-					if hasHistory {
-						_ = i.db.UpdateLeadStatus(data.LeadID, "Insufficient Credits")
-						i.store.EmitCampaignEvent(ctx, data.CampaignID, data.LeadName, data.LeadPhone,
-							"failed", "insufficient credits – recharge to continue")
-						return "", ErrInsufficientCredits
-					}
-					i.log.Info("dial: zero balance, no prior deductions – allowing call (new org)",
-						zap.Int64("org_id", data.OrgID))
-				}
-			}
+		oc, ocErr := i.db.GetOrgCredit(data.OrgID)
+		if ocErr != nil {
+			i.log.Warn("dial: GetOrgCredit failed; allowing call", zap.Error(ocErr))
+		} else if oc != nil && oc.BalancePaise <= 0 {
+			_ = i.db.UpdateLeadStatus(data.LeadID, "Insufficient Credits")
+			i.store.EmitCampaignEvent(ctx, data.CampaignID, data.LeadName, data.LeadPhone,
+				"failed", ErrInsufficientCredits.Error())
+			return "", ErrInsufficientCredits
 		}
 	}
 
 	// 3. Store pending call info in Redis (wshandler reads this on stream connect)
 	pending := rstore.PendingCallInfo{
-		Name:        data.LeadName,
-		Phone:       data.LeadPhone,
-		LeadID:      data.LeadID,
-		OrgID:       data.OrgID,
-		Interest:    data.Interest,
-		CampaignID:  data.CampaignID,
-		TTSProvider: data.TTSProvider,
-		TTSVoiceID:  data.TTSVoiceID,
-		TTSLanguage: data.TTSLanguage,
-		IsBridge:    data.IsBridge,
-		SkipCredits: skipCredits,
-		UserEmail:   data.UserEmail,
-		UserID:      data.UserID,
+		Name:                   data.LeadName,
+		Phone:                  data.LeadPhone,
+		LeadID:                 data.LeadID,
+		OrgID:                  data.OrgID,
+		Interest:               data.Interest,
+		CampaignID:             data.CampaignID,
+		TTSProvider:            data.TTSProvider,
+		TTSVoiceID:             data.TTSVoiceID,
+		TTSLanguage:            data.TTSLanguage,
+		MaxCallDurationSeconds: data.MaxCallDurationSeconds,
+		IsBridge:               data.IsBridge,
+		UserEmail:              data.UserEmail,
+		UserID:                 data.UserID,
 	}
 
 	// 4. Resolve provider credentials.

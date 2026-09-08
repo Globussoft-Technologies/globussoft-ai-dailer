@@ -55,7 +55,7 @@ export default function CampaignsTab({
   const [createError, setCreateError] = useState('');
   const [editCampaignError, setEditCampaignError] = useState('');
   const eventSourceRef = React.useRef(null);
-  const [campVoice, setCampVoice] = useState({ tts_provider: '', tts_voice_id: '', tts_language: '' });
+  const [campVoice, setCampVoice] = useState({ tts_provider: '', tts_voice_id: '', tts_language: '', max_call_duration_seconds: 0 });
   const [campVoiceSaveStatus, setCampVoiceSaveStatus] = useState(''); // '', 'saving', 'saved', 'error'
 
   // Campaign-user assignment state (Admin only).
@@ -221,11 +221,16 @@ export default function CampaignsTab({
       const res = await apiFetch(`${API_URL}/campaigns/${campaignId}/voice-settings`);
       if (res.ok) {
         const data = await res.json();
-        setCampVoice({ tts_provider: data.tts_provider || '', tts_voice_id: data.tts_voice_id || '', tts_language: data.tts_language || '' });
+        setCampVoice({
+          tts_provider: data.tts_provider || '',
+          tts_voice_id: data.tts_voice_id || '',
+          tts_language: data.tts_language || '',
+          max_call_duration_seconds: Number(data.max_call_duration_seconds || 0),
+        });
       } else {
-        setCampVoice({ tts_provider: '', tts_voice_id: '', tts_language: '' });
+        setCampVoice({ tts_provider: '', tts_voice_id: '', tts_language: '', max_call_duration_seconds: 0 });
       }
-    } catch { setCampVoice({ tts_provider: '', tts_voice_id: '', tts_language: ''  }); }
+    } catch { setCampVoice({ tts_provider: '', tts_voice_id: '', tts_language: '', max_call_duration_seconds: 0 }); }
   };
 
   const handleSaveCampVoice = async () => {
@@ -234,7 +239,12 @@ export default function CampaignsTab({
     try {
       const res = await apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/voice-settings`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tts_provider: campVoice.tts_provider, tts_voice_id: campVoice.tts_voice_id, tts_language: campVoice.tts_language })
+        body: JSON.stringify({
+          tts_provider: campVoice.tts_provider,
+          tts_voice_id: campVoice.tts_voice_id,
+          tts_language: campVoice.tts_language,
+          max_call_duration_seconds: Number(campVoice.max_call_duration_seconds || 0),
+        })
       });
       if (!res.ok) {
         setCampVoiceSaveStatus('error');
@@ -252,9 +262,9 @@ export default function CampaignsTab({
     if (!selectedCampaign) return;
     await apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/voice-settings`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tts_provider: '', tts_voice_id: '', tts_language: '' })
+      body: JSON.stringify({ tts_provider: '', tts_voice_id: '', tts_language: '', max_call_duration_seconds: 0 })
     });
-    setCampVoice({ tts_provider: '', tts_voice_id: '', tts_language: '' });
+    setCampVoice({ tts_provider: '', tts_voice_id: '', tts_language: '', max_call_duration_seconds: 0 });
   };
 
   const handleViewCampaign = async (campaign) => {

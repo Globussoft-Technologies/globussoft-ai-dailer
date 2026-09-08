@@ -10,9 +10,10 @@ import (
 
 // VoiceSettings holds TTS configuration for an org or campaign.
 type VoiceSettings struct {
-	TTSProvider string `json:"tts_provider"`
-	TTSVoiceID  string `json:"tts_voice_id"`
-	TTSLanguage string `json:"tts_language"`
+	TTSProvider            string `json:"tts_provider"`
+	TTSVoiceID             string `json:"tts_voice_id"`
+	TTSLanguage            string `json:"tts_language"`
+	MaxCallDurationSeconds int    `json:"max_call_duration_seconds"`
 }
 
 // Organization mirrors the organizations table.
@@ -36,6 +37,7 @@ func (d *DB) EnsureOrganizationsTable() error {
 			tts_provider VARCHAR(50) DEFAULT 'elevenlabs',
 			tts_voice_id VARCHAR(100) DEFAULT NULL,
 			tts_language VARCHAR(10) DEFAULT 'hi',
+			max_call_duration_seconds INT DEFAULT NULL,
 			timezone VARCHAR(100) DEFAULT 'Asia/Kolkata',
 			onboarding_completed TINYINT(1) DEFAULT 0
 		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`)
@@ -44,6 +46,10 @@ func (d *DB) EnsureOrganizationsTable() error {
 	}
 	_, err = d.pool.Exec(`ALTER TABLE organizations ADD COLUMN domain VARCHAR(255) DEFAULT NULL UNIQUE`)
 	if err != nil && !strings.Contains(err.Error(), "Duplicate column name") && !strings.Contains(err.Error(), "1061") {
+		return err
+	}
+	_, err = d.pool.Exec(`ALTER TABLE organizations ADD COLUMN max_call_duration_seconds INT DEFAULT NULL`)
+	if err != nil && !strings.Contains(err.Error(), "Duplicate column name") {
 		return err
 	}
 	return nil
@@ -177,21 +183,24 @@ func (d *DB) UpdateOrganizationTimezone(orgID int64, tz string) error {
 // configs don't leak blanks into the call pipeline.
 func (d *DB) GetOrganizationVoiceSettings(orgID int64) (VoiceSettings, error) {
 	var provider, voiceID, lang sql.NullString
+	var maxDuration sql.NullInt64
 	err := d.pool.QueryRow(
-		`SELECT tts_provider, tts_voice_id, tts_language FROM organizations WHERE id=?`, orgID,
-	).Scan(&provider, &voiceID, &lang)
+		`SELECT tts_provider, tts_voice_id, tts_language, max_call_duration_seconds FROM organizations WHERE id=?`, orgID,
+	).Scan(&provider, &voiceID, &lang, &maxDuration)
 	if errors.Is(err, sql.ErrNoRows) || err != nil {
 		return VoiceSettings{
-			TTSProvider: DefaultTTSProvider,
-			TTSVoiceID:  DefaultVoiceIDFor(DefaultTTSProvider),
-			TTSLanguage: DefaultTTSLanguage,
+			TTSProvider:            DefaultTTSProvider,
+			TTSVoiceID:             DefaultVoiceIDFor(DefaultTTSProvider),
+			TTSLanguage:            DefaultTTSLanguage,
+			MaxCallDurationSeconds: 0,
 		}, nil
 	}
 	prov := coalesceStr(provider.String, DefaultTTSProvider)
 	return VoiceSettings{
-		TTSProvider: prov,
-		TTSVoiceID:  coalesceStr(voiceID.String, DefaultVoiceIDFor(prov)),
-		TTSLanguage: coalesceStr(lang.String, DefaultTTSLanguage),
+		TTSProvider:            prov,
+		TTSVoiceID:             coalesceStr(voiceID.String, DefaultVoiceIDFor(prov)),
+		TTSLanguage:            coalesceStr(lang.String, DefaultTTSLanguage),
+		MaxCallDurationSeconds: clampCallDurationSeconds(int(maxDuration.Int64)),
 	}, nil
 }
 
@@ -227,9 +236,30 @@ func DefaultVoiceIDFor(provider string) string {
 // SaveOrganizationVoiceSettings updates tts_* columns on an org.
 func (d *DB) SaveOrganizationVoiceSettings(orgID int64, vs VoiceSettings) error {
 	_, err := d.pool.Exec(
-		`UPDATE organizations SET tts_provider=?, tts_voice_id=?, tts_language=? WHERE id=?`,
-		nullString(vs.TTSProvider), nullString(vs.TTSVoiceID), nullString(vs.TTSLanguage), orgID)
+		`UPDATE organizations SET tts_provider=?, tts_voice_id=?, tts_language=?, max_call_duration_seconds=? WHERE id=?`,
+		nullString(vs.TTSProvider), nullString(vs.TTSVoiceID), nullString(vs.TTSLanguage),
+		nullInt(vs.MaxCallDurationSeconds), orgID)
 	return err
+}
+
+func nullInt(v int) any {
+	if v <= 0 {
+		return nil
+	}
+	return v
+}
+
+func clampCallDurationSeconds(v int) int {
+	if v <= 0 {
+		return 0
+	}
+	if v < 30 {
+		return 30
+	}
+	if v > 60*60 {
+		return 60 * 60
+	}
+	return v
 }
 
 // EnsureProductsTable creates the products table if it doesn't exist and adds
@@ -290,8 +320,8 @@ type Product struct {
 	AgentPersona         string         `json:"agent_persona"`
 	CallFlowInstructions string         `json:"call_flow_instructions"`
 	CreatedAt            string         `json:"created_at"`
-	ImageURLs            []string       `json:"image_urls"`     // scraped from website
-	ManualImages         []ProductImage `json:"manual_images"`  // manually uploaded via UI
+	ImageURLs            []string       `json:"image_urls"`    // scraped from website
+	ManualImages         []ProductImage `json:"manual_images"` // manually uploaded via UI
 }
 
 const productCols = `id, org_id, name,

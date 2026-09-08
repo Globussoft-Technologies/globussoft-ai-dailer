@@ -24,6 +24,7 @@ func (d *DB) EnsureCampaignsTable() error {
 			tts_provider VARCHAR(50) DEFAULT NULL,
 			tts_voice_id VARCHAR(255) DEFAULT NULL,
 			tts_language VARCHAR(10) DEFAULT NULL,
+			max_call_duration_seconds INT DEFAULT NULL,
 			lead_source VARCHAR(100) DEFAULT NULL,
 			channel VARCHAR(20) NOT NULL DEFAULT 'voice',
 			exotel_account_id BIGINT DEFAULT NULL,
@@ -40,6 +41,7 @@ func (d *DB) EnsureCampaignsTable() error {
 		{"tts_provider", "VARCHAR(50) DEFAULT NULL"},
 		{"tts_voice_id", "VARCHAR(255) DEFAULT NULL"},
 		{"tts_language", "VARCHAR(10) DEFAULT NULL"},
+		{"max_call_duration_seconds", "INT DEFAULT NULL"},
 		{"lead_source", "VARCHAR(100) DEFAULT NULL"},
 		{"channel", "VARCHAR(20) NOT NULL DEFAULT 'voice'"},
 		{"exotel_account_id", "BIGINT DEFAULT NULL"},
@@ -1223,38 +1225,43 @@ func (d *DB) GetCampaignVoiceSettings(campaignID int64) (VoiceSettings, error) {
 	// platform default keeps the call functional.
 	if campaignID <= 0 {
 		return VoiceSettings{
-			TTSProvider: DefaultTTSProvider,
-			TTSVoiceID:  DefaultVoiceIDFor(DefaultTTSProvider),
-			TTSLanguage: DefaultTTSLanguage,
+			TTSProvider:            DefaultTTSProvider,
+			TTSVoiceID:             DefaultVoiceIDFor(DefaultTTSProvider),
+			TTSLanguage:            DefaultTTSLanguage,
+			MaxCallDurationSeconds: 0,
 		}, nil
 	}
 	var orgID int64
 	var provider, voiceID, lang sql.NullString
+	var maxDuration sql.NullInt64
 	err := d.pool.QueryRow(
-		`SELECT COALESCE(tts_provider,''), COALESCE(tts_voice_id,''), COALESCE(tts_language,''), org_id
-		FROM campaigns WHERE id=?`, campaignID,
-	).Scan(&provider, &voiceID, &lang, &orgID)
+		`SELECT COALESCE(tts_provider,''), COALESCE(tts_voice_id,''), COALESCE(tts_language,''), max_call_duration_seconds, org_id
+			FROM campaigns WHERE id=?`, campaignID,
+	).Scan(&provider, &voiceID, &lang, &maxDuration, &orgID)
 	if errors.Is(err, sql.ErrNoRows) {
 		// Same reasoning as the campaignID<=0 branch: a missing campaign row
 		// must still produce a usable language so STT can start. Without this
 		// fallback the dial succeeds but the transcript comes back empty.
 		return VoiceSettings{
-			TTSProvider: DefaultTTSProvider,
-			TTSVoiceID:  DefaultVoiceIDFor(DefaultTTSProvider),
-			TTSLanguage: DefaultTTSLanguage,
+			TTSProvider:            DefaultTTSProvider,
+			TTSVoiceID:             DefaultVoiceIDFor(DefaultTTSProvider),
+			TTSLanguage:            DefaultTTSLanguage,
+			MaxCallDurationSeconds: 0,
 		}, nil
 	}
 	if err != nil {
 		return VoiceSettings{}, err
 	}
+	base, _ := d.GetOrganizationVoiceSettings(orgID)
 	if provider.String != "" && voiceID.String != "" {
-		return VoiceSettings{
-			TTSProvider: provider.String,
-			TTSVoiceID:  voiceID.String,
-			TTSLanguage: coalesceStr(lang.String, DefaultTTSLanguage),
-		}, nil
+		base.TTSProvider = provider.String
+		base.TTSVoiceID = voiceID.String
+		base.TTSLanguage = coalesceStr(lang.String, DefaultTTSLanguage)
 	}
-	return d.GetOrganizationVoiceSettings(orgID)
+	if maxDuration.Valid {
+		base.MaxCallDurationSeconds = clampCallDurationSeconds(int(maxDuration.Int64))
+	}
+	return base, nil
 }
 
 // ListCampaignLeadIDs returns the IDs of all leads assigned to a campaign.
@@ -1279,11 +1286,11 @@ func (d *DB) ListCampaignLeadIDs(campaignID int64) ([]int64, error) {
 // SaveCampaignVoiceSettings updates the tts_* columns on a campaign.
 func (d *DB) SaveCampaignVoiceSettings(campaignID int64, vs VoiceSettings) error {
 	_, err := d.pool.Exec(
-		`UPDATE campaigns SET tts_provider=?, tts_voice_id=?, tts_language=? WHERE id=?`,
-		nullString(vs.TTSProvider), nullString(vs.TTSVoiceID), nullString(vs.TTSLanguage), campaignID)
+		`UPDATE campaigns SET tts_provider=?, tts_voice_id=?, tts_language=?, max_call_duration_seconds=? WHERE id=?`,
+		nullString(vs.TTSProvider), nullString(vs.TTSVoiceID), nullString(vs.TTSLanguage),
+		nullInt(vs.MaxCallDurationSeconds), campaignID)
 	return err
 }
-
 
 func coalesceStr(s, def string) string {
 	if s == "" {
