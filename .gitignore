@@ -101,3 +101,10 @@ backend/audiod
 
 # SSH keys
 *.pem
+
+# Private keys
+*.ppk
+id_rsa
+id_dsa
+id_ecdsa
+id_ed25519
