@@ -89,3 +89,12 @@ backend/bin/
 
 # Kubernetes (local-only deployment, has secrets)
 kubernetes/
+
+# Private keys
+*.pem
+*.key
+*.ppk
+id_rsa
+id_dsa
+id_ecdsa
+id_ed25519
