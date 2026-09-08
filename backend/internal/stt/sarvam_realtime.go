@@ -164,7 +164,7 @@ func (c *SarvamRealtimeClient) connect() (*websocket.Conn, error) {
 	q.Set("encoding", "linear16")
 	q.Set("sample_rate", "8000")
 	q.Set("threshold", "0.3")
-	q.Set("silence_duration_ms", "500")
+	q.Set("silence_duration_ms", "350")
 	q.Set("min_speech_duration_ms", "250")
 	q.Set("prefix_padding_ms", "300")
 	u.RawQuery = q.Encode()

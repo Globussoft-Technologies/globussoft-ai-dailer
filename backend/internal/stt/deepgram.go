@@ -33,8 +33,8 @@ type Client struct {
 	model    string // "nova-2" or "nova-3"
 	log      *zap.Logger
 
-	OnTranscript        func(text string)
-	OnSpeechStarted     func()
+	OnTranscript         func(text string)
+	OnSpeechStarted      func()
 	OnTranscriptWithConf func(text string, confidence float64)
 }
 
@@ -193,8 +193,8 @@ func (c *Client) connectTo(resolvedAddr string) (*websocket.Conn, error) {
 	q.Set("encoding", "linear16")
 	q.Set("sample_rate", "8000")
 	q.Set("channels", "1")
-	q.Set("endpointing", "300")
-	q.Set("utterance_end_ms", "1000")
+	q.Set("endpointing", "200")
+	q.Set("utterance_end_ms", "500")
 	q.Set("interim_results", "true")
 	q.Set("vad_events", "true")
 	u.RawQuery = q.Encode()

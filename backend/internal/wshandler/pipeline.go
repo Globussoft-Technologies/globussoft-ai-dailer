@@ -28,7 +28,7 @@ func runPipeline(ctx context.Context, sess *CallSession, provider *llm.Provider,
 	// Capacity 1: new transcripts overwrite the previous one before dispatch.
 	pending := make(chan string, 1)
 
-	// Dispatcher: drains pending after a 150ms quiet window.
+	// Dispatcher: drains pending after a short quiet window.
 	go func() {
 		for {
 			select {
@@ -41,7 +41,7 @@ func runPipeline(ctx context.Context, sess *CallSession, provider *llm.Provider,
 				// Wait for the debounce window, then check if a newer
 				// transcript replaced this one in the pipeline.
 				ts := sess.StampTranscript()
-				time.Sleep(150 * time.Millisecond)
+				time.Sleep(75 * time.Millisecond)
 				if sess.LastTranscript() == ts {
 					go processTranscript(ctx, sess, transcript, ts, provider, store)
 				}
@@ -75,7 +75,7 @@ func runPipeline(ctx context.Context, sess *CallSession, provider *llm.Provider,
 
 // processTranscript is the per-turn logic: takeover check → backchannel → LLM → TTS queue.
 // ts is the debounce stamp set by the dispatcher in runPipeline — the dispatcher
-// already waited 150ms and confirmed it's still current before calling us.
+// already waited briefly and confirmed it's still current before calling us.
 // Mirrors Python's _process_transcript in ws_handler.py.
 func processTranscript(ctx context.Context, sess *CallSession, transcript string, ts int64, provider *llm.Provider, store *rstore.Store) {
 	if sess.IsFinalClosing() {
@@ -389,10 +389,9 @@ func synthesizeAndSend(ctx context.Context, sess *CallSession, provider tts.Prov
 // the Voicebot applet decodes the WS payload directly into its outbound RTP
 // stream without a jitter buffer in between.
 func sendAudioFrame(sess *CallSession, pcm8k []byte) {
-	// BARGE-IN DISABLED: do not drop frames on barge-in.
-	// if sess.IsBargeInActive() {
-	// 	return
-	// }
+	if sess.IsBargeInActive() {
+		return
+	}
 	// Record for server-side stereo WAV
 	sess.AppendTTSChunk(pcm8k)
 	// Feed echo canceller (ulaw representation)

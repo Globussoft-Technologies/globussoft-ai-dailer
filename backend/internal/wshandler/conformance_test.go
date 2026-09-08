@@ -169,21 +169,20 @@ func TestBinaryFrameAccepted(t *testing.T) {
 func TestMaxTokens(t *testing.T) {
 	sess := &CallSession{Language: "hi"}
 
-	// Short transcript (2 words -> 72) clamped to non-English minimum 700.
-	assert.Equal(t, int32(700), sess.MaxTokens("test transcript"), "short non-English transcript should be 700")
+	// Short transcript is clamped to the non-English minimum.
+	assert.Equal(t, int32(320), sess.MaxTokens("test transcript"), "short non-English transcript should be 320")
 
-	// Medium transcript (10 words -> 360) is still clamped to the minimum.
-	assert.Equal(t, int32(700), sess.MaxTokens("one two three four five six seven eight nine ten"))
+	// Medium transcript is still clamped to the minimum.
+	assert.Equal(t, int32(320), sess.MaxTokens("one two three four five six seven eight nine ten"))
 
-	// Long transcript (>20 words → 756)
+	// Long transcript scales up without allowing long monologues.
 	longText := "one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty twentyone"
-	assert.Equal(t, int32(756), sess.MaxTokens(longText), "long non-English transcript should be 756")
+	assert.Equal(t, int32(504), sess.MaxTokens(longText), "long non-English transcript should be 504")
 
-	// English keeps a lower cap than Indian languages but needs enough room
-	// for side questions and pricing turns without hitting max output.
+	// English keeps a lower cap than Indian languages for faster outbound turns.
 	sess.Language = "en"
-	assert.Equal(t, int32(500), sess.MaxTokens("test transcript"), "short English transcript should be 500")
-	assert.Equal(t, int32(714), sess.MaxTokens(longText), "long English transcript should be 714")
+	assert.Equal(t, int32(250), sess.MaxTokens("test transcript"), "short English transcript should be 250")
+	assert.Equal(t, int32(420), sess.MaxTokens(longText), "long English transcript should be 420")
 }
 
 // TestGreetingSentOnce verifies TrySetGreeting is idempotent (atomic CAS).
