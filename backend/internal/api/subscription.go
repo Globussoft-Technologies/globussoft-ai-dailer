@@ -15,15 +15,17 @@ type AdminSubscriptionRequest struct {
 	ExpiresAt  time.Time `json:"expires_at"`
 	Plan       string    `json:"plan,omitempty"`
 	IsActive   bool      `json:"is_active,omitempty"`
+	Minutes    *int      `json:"minutes,omitempty"`
 }
 
 // AdminSubscriptionResponse is the payload returned for a subscription.
 type AdminSubscriptionResponse struct {
-	AdminEmail string    `json:"admin_email"`
-	ExpiresAt  time.Time `json:"expires_at"`
-	Plan       string    `json:"plan"`
-	IsActive   bool      `json:"is_active"`
-	Status     string    `json:"status"`
+	AdminEmail       string    `json:"admin_email"`
+	ExpiresAt        time.Time `json:"expires_at"`
+	Plan             string    `json:"plan"`
+	IsActive         bool      `json:"is_active"`
+	Status           string    `json:"status"`
+	MinutesAvailable int       `json:"minutes_available"`
 }
 
 // isSuperAdmin checks whether the given email is the configured super-admin
@@ -83,11 +85,12 @@ func (s *Server) listAdminSubscriptions(w http.ResponseWriter, r *http.Request) 
 			statusText = "expired"
 		}
 		resp = append(resp, AdminSubscriptionResponse{
-			AdminEmail: sub.AdminEmail,
-			ExpiresAt:  sub.ExpiresAt,
-			Plan:       sub.Plan,
-			IsActive:   sub.IsActive,
-			Status:     statusText,
+			AdminEmail:       sub.AdminEmail,
+			ExpiresAt:        sub.ExpiresAt,
+			Plan:             sub.Plan,
+			IsActive:         sub.IsActive,
+			Status:           statusText,
+			MinutesAvailable: s.minutesAvailableForAdmin(sub.AdminEmail),
 		})
 	}
 	writeJSON(w, http.StatusOK, resp)
@@ -123,10 +126,37 @@ func (s *Server) createOrUpdateSubscription(w http.ResponseWriter, r *http.Reque
 	}
 	req.Plan = strings.ToLower(strings.TrimSpace(req.Plan))
 
+	var adminOrgID int64
+	if req.Minutes != nil {
+		if *req.Minutes < 0 {
+			writeError(w, http.StatusBadRequest, "minutes must be zero or greater")
+			return
+		}
+		adminUser, err := s.db.GetUserByEmail(req.AdminEmail)
+		if err != nil {
+			s.logger.Sugar().Errorw("createOrUpdateSubscription: GetUserByEmail failed", "err", err, "email", req.AdminEmail)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if adminUser == nil || adminUser.OrgID <= 0 || adminUser.Role != db.RoleAdmin {
+			writeError(w, http.StatusBadRequest, "admin user not found for minutes update")
+			return
+		}
+		adminOrgID = adminUser.OrgID
+	}
+
 	if err := s.db.CreateOrUpdateAdminSubscription(req.AdminEmail, req.ExpiresAt.UTC(), req.Plan, req.IsActive); err != nil {
 		s.logger.Sugar().Errorw("createOrUpdateSubscription failed", "err", err, "email", req.AdminEmail)
 		writeError(w, http.StatusInternalServerError, "failed to save subscription")
 		return
+	}
+
+	if req.Minutes != nil {
+		if _, err := s.db.SetOrgCreditMinutes(adminOrgID, *req.Minutes, "superadmin-subscription", "Superadmin minutes update"); err != nil {
+			s.logger.Sugar().Errorw("createOrUpdateSubscription: SetOrgCreditMinutes failed", "err", err, "email", req.AdminEmail, "org_id", adminOrgID)
+			writeError(w, http.StatusInternalServerError, "failed to save minutes")
+			return
+		}
 	}
 
 	// Sync the AI-features flag with the chosen plan:
@@ -155,11 +185,12 @@ func (s *Server) createOrUpdateSubscription(w http.ResponseWriter, r *http.Reque
 	}
 
 	writeJSON(w, http.StatusOK, AdminSubscriptionResponse{
-		AdminEmail: req.AdminEmail,
-		ExpiresAt:  req.ExpiresAt.UTC(),
-		Plan:       req.Plan,
-		IsActive:   req.IsActive,
-		Status:     statusText,
+		AdminEmail:       req.AdminEmail,
+		ExpiresAt:        req.ExpiresAt.UTC(),
+		Plan:             req.Plan,
+		IsActive:         req.IsActive,
+		Status:           statusText,
+		MinutesAvailable: s.minutesAvailableForAdmin(req.AdminEmail),
 	})
 }
 
@@ -199,12 +230,28 @@ func (s *Server) getAdminSubscription(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, AdminSubscriptionResponse{
-		AdminEmail: sub.AdminEmail,
-		ExpiresAt:  sub.ExpiresAt,
-		Plan:       sub.Plan,
-		IsActive:   sub.IsActive,
-		Status:     statusText,
+		AdminEmail:       sub.AdminEmail,
+		ExpiresAt:        sub.ExpiresAt,
+		Plan:             sub.Plan,
+		IsActive:         sub.IsActive,
+		Status:           statusText,
+		MinutesAvailable: s.minutesAvailableForAdmin(sub.AdminEmail),
 	})
+}
+
+func (s *Server) minutesAvailableForAdmin(email string) int {
+	adminUser, err := s.db.GetUserByEmail(email)
+	if err != nil || adminUser == nil || adminUser.OrgID <= 0 {
+		return 0
+	}
+	if adminUser.Role != db.RoleAdmin {
+		return 0
+	}
+	credits, err := s.db.GetOrgCredit(adminUser.OrgID)
+	if err != nil || credits == nil {
+		return 0
+	}
+	return credits.MinutesAvailable
 }
 
 // subscriptionError is a structured error for subscription failures.

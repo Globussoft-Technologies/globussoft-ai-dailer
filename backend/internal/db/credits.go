@@ -11,10 +11,10 @@ const DefaultRatePerMinPaise = 500
 
 // OrgCredit mirrors the org_credits table — a single ledger balance per org.
 type OrgCredit struct {
-	OrgID            int64 `json:"org_id"`
-	BalancePaise     int64 `json:"balance_paise"`
-	RatePerMinPaise  int   `json:"rate_per_min_paise"`
-	MinutesAvailable int   `json:"minutes_available"` // derived: balance / rate
+	OrgID            int64  `json:"org_id"`
+	BalancePaise     int64  `json:"balance_paise"`
+	RatePerMinPaise  int    `json:"rate_per_min_paise"`
+	MinutesAvailable int    `json:"minutes_available"` // derived: balance / rate
 	UpdatedAt        string `json:"updated_at"`
 }
 
@@ -116,6 +116,58 @@ func (d *DB) AddCredits(orgID int64, deltaPaise int64, txType, reference, notes 
 		return 0, err
 	}
 	return res.LastInsertId()
+}
+
+// SetOrgCreditMinutes sets the org's available calling minutes to an absolute
+// value and records the adjustment in the credit ledger.
+func (d *DB) SetOrgCreditMinutes(orgID int64, minutes int, reference, notes string) (int64, error) {
+	if minutes < 0 {
+		minutes = 0
+	}
+	tx, err := d.pool.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.Exec(
+		`INSERT IGNORE INTO org_credits (org_id, balance_paise, rate_per_min_paise) VALUES (?, 0, ?)`,
+		orgID, DefaultRatePerMinPaise); err != nil {
+		return 0, err
+	}
+
+	var currentBalance int64
+	var ratePerMin int
+	if err := tx.QueryRow(
+		`SELECT balance_paise, COALESCE(rate_per_min_paise, ?) FROM org_credits WHERE org_id=?`,
+		DefaultRatePerMinPaise, orgID,
+	).Scan(&currentBalance, &ratePerMin); err != nil {
+		return 0, err
+	}
+	if ratePerMin <= 0 {
+		ratePerMin = DefaultRatePerMinPaise
+	}
+
+	newBalance := int64(minutes) * int64(ratePerMin)
+	delta := newBalance - currentBalance
+	if _, err := tx.Exec(
+		`UPDATE org_credits SET balance_paise = ? WHERE org_id=?`,
+		newBalance, orgID); err != nil {
+		return 0, err
+	}
+
+	if _, err := tx.Exec(`
+		INSERT INTO credit_transactions
+		  (org_id, delta_paise, balance_after_paise, type, reference, rate_per_min_paise, notes)
+		VALUES (?, ?, ?, 'manual_adjust', ?, ?, ?)`,
+		orgID, delta, newBalance, nullString(reference), ratePerMin, nullString(notes)); err != nil {
+		return 0, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return newBalance, nil
 }
 
 // DeductCallCredits charges the lesser of (duration*rate, current balance) so

@@ -7,6 +7,7 @@ export default function SubscriptionsPage({ apiFetch }) {
   const [email, setEmail] = useState('');
   const [expiresAt, setExpiresAt] = useState('');
   const [plan, setPlan] = useState('standard');
+  const [minutes, setMinutes] = useState(100);
   const [isActive, setIsActive] = useState(true);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState(null);
@@ -61,13 +62,15 @@ export default function SubscriptionsPage({ apiFetch }) {
           admin_email: email,
           expires_at: new Date(expiresAt).toISOString(),
           plan,
+          minutes: Number(minutes) || 0,
           is_active: isActive,
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to save subscription');
-      showMessage(`Subscription ${data.status} for ${data.admin_email} until ${new Date(data.expires_at).toLocaleDateString()}`);
+      showMessage(`Subscription ${data.status} for ${data.admin_email} until ${new Date(data.expires_at).toLocaleDateString()} with ${data.minutes_available || 0} minutes`);
       setEmail('');
+      setMinutes(100);
       fetchSubscriptions();
     } catch (err) {
       setError(err.message);
@@ -87,7 +90,8 @@ export default function SubscriptionsPage({ apiFetch }) {
       setSubscription(data);
       // Pre-fill form for quick edit
       setEmail(data.admin_email);
-      setPlan(data.plan === 'manual' ? 'manual' : 'standard');
+      setPlan(['trial', 'manual', 'standard'].includes(data.plan) ? data.plan : 'standard');
+      setMinutes(data.minutes_available || 0);
       setIsActive(data.is_active);
       const d = new Date(data.expires_at);
       setExpiresAt(d.toISOString().slice(0, 16));
@@ -134,7 +138,7 @@ export default function SubscriptionsPage({ apiFetch }) {
   }
 
   return (
-    <div style={{ padding: '1.5rem 2rem', maxWidth: 900, margin: '0 auto' }}>
+    <div style={{ padding: '1.5rem 2rem', maxWidth: 1000, margin: '0 auto' }}>
       <h1 style={{ fontSize: '1.6rem', fontWeight: 700, marginBottom: '1.5rem', color: '#111827' }}>
         🛡️ Subscription Management
       </h1>
@@ -239,6 +243,10 @@ export default function SubscriptionsPage({ apiFetch }) {
                 <span style={{ fontSize: 12, color: '#6b7280' }}>Expires At</span>
                 <div style={{ fontWeight: 600, fontSize: 14 }}>{new Date(subscription.expires_at).toLocaleString()}</div>
               </div>
+              <div>
+                <span style={{ fontSize: 12, color: '#6b7280' }}>Minutes</span>
+                <div style={{ fontWeight: 600, fontSize: 14 }}>{subscription.minutes_available || 0}</div>
+              </div>
             </div>
           </div>
         )}
@@ -279,9 +287,22 @@ export default function SubscriptionsPage({ apiFetch }) {
                 onChange={e => setPlan(e.target.value)}
                 style={inputStyle}
               >
+                <option value="trial">Trial</option>
                 <option value="standard">Standard (AI features enabled)</option>
                 <option value="manual">Manual calls only (AI features hidden)</option>
               </select>
+            </div>
+            <div>
+              <label style={labelStyle}>Minutes</label>
+              <input
+                type="number"
+                min="0"
+                step="1"
+                value={minutes}
+                onChange={e => setMinutes(e.target.value)}
+                placeholder="100"
+                style={inputStyle}
+              />
             </div>
           </div>
 
@@ -339,6 +360,7 @@ export default function SubscriptionsPage({ apiFetch }) {
                   <th style={{ padding: '10px 8px', color: '#374151', fontWeight: 600 }}>Email</th>
                   <th style={{ padding: '10px 8px', color: '#374151', fontWeight: 600 }}>Plan</th>
                   <th style={{ padding: '10px 8px', color: '#374151', fontWeight: 600 }}>Status</th>
+                  <th style={{ padding: '10px 8px', color: '#374151', fontWeight: 600 }}>Minutes</th>
                   <th style={{ padding: '10px 8px', color: '#374151', fontWeight: 600 }}>Expires At</th>
                   <th style={{ padding: '10px 8px', color: '#374151', fontWeight: 600 }}>Actions</th>
                 </tr>
@@ -363,12 +385,14 @@ export default function SubscriptionsPage({ apiFetch }) {
                           {s.status}
                         </span>
                       </td>
+                      <td style={{ padding: '10px 8px' }}>{s.minutes_available || 0}</td>
                       <td style={{ padding: '10px 8px' }}>{new Date(s.expires_at).toLocaleString()}</td>
                       <td style={{ padding: '10px 8px' }}>
                         <button
                           onClick={() => {
                             setEmail(s.admin_email);
-                            setPlan(s.plan === 'manual' ? 'manual' : 'standard');
+                            setPlan(['trial', 'manual', 'standard'].includes(s.plan) ? s.plan : 'standard');
+                            setMinutes(s.minutes_available || 0);
                             setIsActive(s.is_active);
                             const d = new Date(s.expires_at);
                             setExpiresAt(d.toISOString().slice(0, 16));
@@ -392,7 +416,7 @@ export default function SubscriptionsPage({ apiFetch }) {
                   ))}
                 {subscriptions.filter(s => s.admin_email.toLowerCase().includes(searchQuery.toLowerCase())).length === 0 && (
                   <tr>
-                    <td colSpan={5} style={{ padding: '20px 8px', textAlign: 'center', color: '#6b7280' }}>
+                    <td colSpan={6} style={{ padding: '20px 8px', textAlign: 'center', color: '#6b7280' }}>
                       {searchQuery ? 'No subscriptions match your search.' : 'No subscriptions found.'}
                     </td>
                   </tr>
@@ -409,8 +433,9 @@ export default function SubscriptionsPage({ apiFetch }) {
         <ul style={{ margin: 0, paddingLeft: 18, color: '#4b5563', fontSize: 14, lineHeight: 1.6 }}>
           <li>Admins without a subscription will be blocked at login.</li>
           <li>Admins with an expired subscription will see a renewal prompt.</li>
+          <li>Trial signups receive 100 starting minutes.</li>
           <li>Use the <strong>Lookup</strong> form to check an admin's current status.</li>
-          <li>Use the <strong>Create/Update</strong> form to set or extend a subscription.</li>
+          <li>Use the <strong>Create/Update</strong> form to set expiry, plan, status, and minutes.</li>
         </ul>
       </div>
     </div>
